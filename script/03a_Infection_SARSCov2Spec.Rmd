@@ -1,0 +1,136 @@
+---
+title: "2024-02-26-Dexposnegovertime"
+author: "lcegla"
+date: "2024-02-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Libs
+```{r libs}
+library(readxl)
+library(tidyverse)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(rstudioapi)
+library(MetBrewer)
+library(xlsx)
+```
+
+# Import data
+```{r import data}
+rm(list = ls())
+
+path.Data <- "../input/Figure_3/"
+path.Rout <- "../output/Figure_3/"
+
+```
+
+
+
+```{r}
+me<-read_excel(paste0(path.Data, "IL2RIL7R_Dex_fulldata.xlsx"))
+```
+
+```{r CD25}
+me1<-me %>% 
+  dplyr::filter(type=="CD25") %>% 
+  dplyr::filter(Population!="Tcons") %>% 
+  dplyr::filter(SevMax2!="Healthy")
+
+CD25avrg<-me1 %>% 
+  dplyr::group_by(Population, Sampling_month) %>% 
+  dplyr::summarise(avrg=mean(measurement), sd=sd(measurement), n=n())
+
+
+CD25stats<-me1 %>%
+      dplyr::group_by(Population) %>%
+  rstatix::wilcox_test(formula = measurement ~ Sampling_month, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")),paired = F) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD25stats
+
+CD25stats$p.adj<-format(CD25stats$p.adj, scientific=T)
+
+CD25stats$p.adj<-as.numeric(CD25stats$p.adj)
+
+CD25statsexport<-CD25stats %>% dplyr::select(group1, group2, n1, n2,statistic,p,p.adj,Population) %>% as.data.frame()
+
+
+
+pdf(paste0(path.Rout, "2024-02-26-CD25_dexposneg-nofreescale-nostats-5more.pdf"), height = 5, width = 10)
+ggplot(me1, aes(x =Sampling_month , y = measurement))+
+  geom_violin(aes(fill = Population, alpha = Sampling_month), colour="black",draw_quantiles = 0.5)+
+  geom_point(aes(color = Population))+
+  geom_line(aes(group=Patient))+
+  theme_bw()+
+  labs(color = "Cell type", fill = "Cell type", y = "CD25 (gMFI)")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = "none",
+          strip.background = element_blank())+
+  facet_wrap(~Population)+
+  #stat_pvalue_manual(CD25stats,label = "p.adj")+
+  #scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0.05, 0.12)))+
+  scale_color_manual(values = met.brewer("Cassatt2", n=length(me$Population %>% unique)))+
+  scale_fill_manual(values = met.brewer("Cassatt2", n=length(me$Population %>% unique)))+
+  scale_alpha_discrete(range = c(0.7, 0.3))+
+  theme_cowplot()
+dev.off()
+
+
+```
+
+```{r CD127}
+me1<-me %>% 
+  dplyr::filter(type=="CD127") %>% 
+  dplyr::filter(Population!="Tcons")
+
+CD127avrg<-me1 %>% 
+  dplyr::group_by(Population, Sampling_month) %>% 
+  dplyr::summarise(avrg=mean(measurement))
+
+
+CD127stats<-me1 %>%
+      dplyr::group_by(Population) %>%
+  rstatix::wilcox_test(formula = measurement ~ Sampling_month, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")),paired = F) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD127stats
+
+CD127stats$p.adj<-format(CD127stats$p.adj, scientific=T)
+
+CD127stats$p.adj<-as.numeric(CD127stats$p.adj)
+CD127statsexport<-CD127stats %>% dplyr::select(group1, group2, n1, n2,statistic,p,p.adj) %>% as.data.frame()
+
+#xlsx::write.xlsx(CD127statsexport,paste0(path.Rout, "Dexpos_CD127-stats.xlsx"))
+
+pdf(paste0(path.Rout, "2024-02-26-CD127_dexposneg-nofreescale-nostats-5more.pdf"), height = 5, width = 10)
+ggplot(me1, aes(x =Sampling_month , y = measurement))+
+  geom_violin(aes(fill = Population, alpha = Sampling_month), colour="black",draw_quantiles = 0.5)+
+  geom_point(aes(color = Population))+
+  geom_line(aes(group=Patient))+
+  theme_bw()+
+  labs(color = "Cell type", fill = "Cell type", y = "CD127 (gMFI)")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = "none",
+          strip.background = element_blank())+
+  facet_wrap(~Population)+
+  #stat_pvalue_manual(CD127stats,label = "p.adj")+
+  #scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0.05, 0.12)))+
+  scale_color_manual(values = met.brewer("Cassatt2", n=length(me$Population %>% unique)))+
+  scale_fill_manual(values = met.brewer("Cassatt2", n=length(me$Population %>% unique)))+
+  scale_alpha_discrete(range = c(0.7, 0.3))+
+  theme_cowplot()
+dev.off()
+
+
+```
+

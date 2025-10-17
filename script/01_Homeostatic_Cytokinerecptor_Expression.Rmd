@@ -1,0 +1,675 @@
+---
+title: "Figure_1 Expression of common gamma chain receptor subunits in healthy human individuals"
+author: "lcegla"
+date: "2023-12-07"
+output: html_document
+---
+
+```{r load libraries}
+library("ggplot2")
+library("ggpubr")
+library("grid")
+library("coin")
+library("cowplot")
+library("mgcv")
+library("ggpubr")
+library("gplots")
+library("plyr")
+library("dplyr")
+library("ggcorrplot")
+library("ggfortify")
+library("corrplot")
+library("tidyverse")
+library("questionr")
+library("VennDiagram")
+library("RColorBrewer")
+library("ggVennDiagram")
+library("UpSetR")
+library("gridExtra")
+library("rstatix")
+library("factoextra")
+library("skimr")
+library("ggalt")
+library("MetBrewer")
+library("readxl") 
+
+```
+
+```{r import data}
+rm(list = ls())
+
+path.input <- "../input/Figure_1/"
+path.out <- "../output/Figure_1/"
+Isotype_results <- read_excel(paste0(path.input,"Figure_1_rawdata_Isotypes.xlsx"))
+Fullstain_results<-read_excel(paste0(path.input,"Figure_1_rawdata_fullstain.xlsx"))
+```
+
+
+```{r create metadata}
+md.isotype<-data.frame("file.name" = Isotype_results$file.name)
+
+md.isotype<-md.isotype %>% separate(file.name, c("Staintype", "Well" ,"ID", "Biobank", "Birthyear"), remove = FALSE)
+
+
+md.fullstain<-data.frame("file.name" = Fullstain_results$file.name)
+
+md.fullstain<-md.fullstain %>% separate(file.name, c("Staintype", "Well" ,"ID", "Biobank", "Birthyear"), remove = FALSE)
+
+md.combined<-rbind(md.fullstain, md.isotype)
+  
+data.combined<-rbind(Fullstain_results, Isotype_results)
+
+```
+
+
+
+
+```{r features}
+features <- data.frame("analysis" = colnames(data.combined))
+features <- features %>% separate(analysis, into = c("name", "type"), sep = " [|] ", remove = FALSE)
+
+features$short <- str_match(features$name, "^.+\\/(.*)$")[,2] #extract piece after last "/" as population name
+
+features$parent <- features$name %>% str_match(pattern = "(^.+)\\/.*") %>% .[,2] %>% str_match("^.+\\/(.*)") %>% .[,2] #extract the parent population
+features<- features %>% 
+  dplyr::filter(!is.na(short)) %>% 
+mutate(Subpopulation=paste(short, parent, sep = "_"))
+features$marker <- features$type %>% str_match("Geometric Mean \\((.+)\\)") %>% .[,2] #extract the marker for MFIs
+
+```
+
+```{r merge to full dataframe}
+
+dfmd <- merge(data.combined, md.combined, by.y = "file.name")
+ga <- dfmd %>% tidyr::gather(key = "analysis", value = "measurement", features$analysis)
+ga$measurement <- ga$measurement %>% str_replace(" %", "") %>% as.numeric()
+ga <- ga[!is.na(ga$measurement),] #remove rows where measurement is NA
+
+me <- merge(ga, features, by = "analysis")
+
+me <- me %>% dplyr::select(-c(analysis, name, parent, marker))
+
+#xlsx::write.xlsx(x = me, file = paste0(path.out, "Figure_1_fulldata.xlsx"), row.names = FALSE)
+```
+
+#Start here from the full dataframe prepared above
+```{r}
+me<-read_excel(paste0(path.input, "Figure_1_fulldata.xlsx"))
+
+#each sample was stained in 2 conditions once with a full panel and once with a lineage panel
+#and matched isotype controls for each yC receptor subunit
+#now we will substract the Isotype background signal from each paired sample and create a normmalised df
+
+menorm <- me %>% 
+  add_column(Isotype_adj=NA) %>% 
+  as.data.frame()
+
+#loop through the samples substracting the isotype from full signal
+ for(p in unique(menorm$Biobank)){
+   for(s in unique(menorm$Subpopulation)){
+     for(t in unique(menorm$type)){
+               menorm[menorm$Biobank == p & menorm$Subpopulation == s & menorm$type == t , "Isotype_adj"] <- menorm[menorm$Biobank == p & menorm$Subpopulation == s & menorm$type == t , "measurement"] - menorm[menorm$Biobank == p & menorm$Subpopulation == s & menorm$type == t & menorm$Staintype== "Isoyype" , "measurement"]
+ 
+       }
+      }
+   }
+
+#do a quality check seeing that the Isotypes are now all 0 
+menorm %>% 
+  group_by(Staintype)%>% 
+  dplyr::summarise(avrg=mean(Isotype_adj), sd=sd(Isotype_adj), SEM= sd(Isotype_adj) / sqrt(n()) ) %>% 
+  as.data.frame()
+
+me.corr<-menorm
+
+#save the corrected dataset
+#xlsx::write.xlsx(x = me.corr, file = paste0(path.out, "Figure_1_Isotypecorrected_data.xlsx"), row.names = FALSE)
+
+```
+
+#Start here if starting from Isotype corrected data
+```{r}
+me.corr<-read_excel(paste0(path.input, "Figure_1_Isotypecorrected_data.xlsx"))
+
+me.corr<-me.corr %>% 
+  dplyr::filter(Staintype=="fullstain")
+
+df<-me.corr %>% dplyr::group_by(Subpopulation,type) %>% dplyr::summarise(Rlevel=mean(Isotype_adj)) %>% as.data.frame()
+
+#xlsx::write.xlsx(x = df, file = paste0(path.out, "Figure_1_Isotypecorrected_data_averageExpression.xlsx"), row.names = FALSE)
+```
+
+Figure 1C
+```{r}
+#CD25----
+
+CD25<-me.corr %>% 
+  dplyr::filter(type=="Geometric Mean (CD25)") %>% 
+  dplyr::filter(!Subpopulation %in% c("Q3: CD45RA+ , CCR7-_Tcon", "Treg_CD4") )
+
+CD25$Subpopulation<-factor(CD25$Subpopulation, levels = c( "DN_Bcell_Bcell","PB_PC_B-cell","transitional B cell_naive_Bcell","switched_mBC_Bcell","unswitched_MBC_Bcell","naive_Bcell_Bcell","NK56bright_CD19-","NK56dim_CD19-","NKTcell_CD19-","Q3: CD45RA+ , CCR7-_CD8","Q4: CD45RA- , CCR7-_CD8","Q1: CD45RA- , CCR7+_CD8","Q2: CD45RA+ , CCR7+_CD8","aTreg_Treg","rTreg_Treg","Q4: CD45RA- , CCR7-_Tcon","Q1: CD45RA- , CCR7+_Tcon","Q2: CD45RA+ , CCR7+_Tcon"))
+
+
+
+mycomparisons<-list(c("aTreg_Treg", "rTreg_Treg"), c("naive_Bcell_Bcell", "switched_mBC_Bcell"), c("naive_Bcell_Bcell", "unswitched_MBC_Bcell"), c("switched_mBC_Bcell","unswitched_MBC_Bcell"), c("naive_Bcell_Bcell","transitional B cell_naive_Bcell"), c("NK56bright_CD19-", "NK56dim_CD19-"),
+                    c("Q2: CD45RA+ , CCR7+_CD8", "Q4: CD45RA- , CCR7-_CD8"), c("Q2: CD45RA+ , CCR7+_CD8", "Q3: CD45RA+ , CCR7-_CD8"), c("Q4: CD45RA- , CCR7-_CD8","Q3: CD45RA+ , CCR7-_CD8"), c("Q2: CD45RA+ , CCR7+_Tcon", "Q4: CD45RA- , CCR7-_Tcon"), c("Q2: CD45RA+ , CCR7+_Tcon", "Q1: CD45RA- , CCR7+_Tcon"), c("Q4: CD45RA- , CCR7-_Tcon", "Q1: CD45RA- , CCR7+_Tcon"))
+
+
+CD25_stats<- CD25 %>%
+  rstatix::wilcox_test(formula = Isotype_adj ~ Subpopulation, comparisons = mycomparisons, paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD25_stats$p.adj<-format(CD25_stats$p.adj, scientific=T)
+
+CD25statexport<-CD25_stats %>%dplyr::select(group1,group2,n1, n2, statistic, p,p.adj) %>% as.data.frame()
+
+#xlsx::write.xlsx(x = CD25statexport, file = paste0(path.out, "CD25stats.xlsx"), row.names = FALSE)
+
+y.max<-max(CD25$Isotype_adj)
+a<-ggplot(CD25, aes(x=Subpopulation, y=Isotype_adj))+
+  geom_point(color="tomato3", size=3)+
+  geom_line(aes(group=Biobank), alpha=0.1)+
+  theme_bw()+
+  xlab("")+
+  theme_classic()+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y =element_blank(),
+        #axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  coord_flip()+
+  ylab("CD25 (gMFI)")+
+  geom_hline(yintercept=0, linetype=2)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)+
+  stat_pvalue_manual(data=CD25_stats, bracket.shorten=0.3, label="p.adj.signif",step.increase = .001, bracket.size = 0.001, bracket.nudge.y =-5,coord.flip =T )
+
+a
+
+#pdf(paste0(path.out, "Figure_1_C_CD25.pdf"), height = 9, width = 8)
+a
+ggplot(CD25, aes(x=Subpopulation, y=Isotype_adj))+
+  geom_point(color="tomato3", size=3)+
+  geom_line(aes(group=Biobank), alpha=0.1)+
+  theme_bw()+
+  xlab("")+
+  theme_classic()+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y =element_blank(),
+        #axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  coord_flip()+
+  ylab("CD25 (gMFI)")+
+  geom_hline(yintercept=0, linetype=2)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)
+#dev.off()
+```
+
+
+
+Figure 1D
+```{r}
+#CD122----
+
+CD122<-me.corr %>% 
+  dplyr::filter(type=="Geometric Mean (CD122)") %>% 
+  dplyr::filter(!Subpopulation %in% c("Q3: CD45RA+ , CCR7-_Tcon", "Treg_CD4") )
+
+CD122$Subpopulation<-factor(CD122$Subpopulation, levels = c( "DN_Bcell_Bcell","PB_PC_B-cell","transitional B cell_naive_Bcell","switched_mBC_Bcell","unswitched_MBC_Bcell","naive_Bcell_Bcell","NK56bright_CD19-","NK56dim_CD19-","NKTcell_CD19-","Q3: CD45RA+ , CCR7-_CD8","Q4: CD45RA- , CCR7-_CD8","Q1: CD45RA- , CCR7+_CD8","Q2: CD45RA+ , CCR7+_CD8","aTreg_Treg","rTreg_Treg","Q4: CD45RA- , CCR7-_Tcon","Q1: CD45RA- , CCR7+_Tcon","Q2: CD45RA+ , CCR7+_Tcon"))
+
+CD122_stats<- CD122 %>%
+  rstatix::wilcox_test(formula = Isotype_adj ~ Subpopulation, comparisons = mycomparisons, paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD122_stats$p.adj<-format(CD122_stats$p.adj, scientific=T)
+
+CD122statexport<-CD122_stats %>%dplyr::select(group1,group2,n1, n2, statistic, p,p.adj) %>% as.data.frame()
+
+#xlsx::write.xlsx(x = CD122statexport, file = paste0(path.out, "CD122stats.xlsx"), row.names = FALSE)
+
+y.max<-max(CD122$Isotype_adj)
+b<-ggplot(CD122, aes(x=Subpopulation, y=Isotype_adj))+
+  geom_point(color="darkorange3", size=3)+
+  geom_line(aes(group=Biobank), alpha=0.1)+
+  theme_bw()+
+  xlab("")+
+  theme_classic()+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y =element_blank(),
+        #axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  coord_flip()+
+  ylab("CD122 (gMFI)")+
+  ylim(c(0,NA))+
+  geom_hline(yintercept=0, linetype=2)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)+
+  stat_pvalue_manual(data=CD122_stats, bracket.shorten=0.3, label="p.adj.signif",step.increase = .001, bracket.size = 0.001, bracket.nudge.y =-5,coord.flip =T,hide.ns = T )
+
+#pdf(paste0(path.out, "Figure_1_D_CD122.pdf"), height = 9, width = 8)
+b
+ggplot(CD122, aes(x=Subpopulation, y=Isotype_adj))+
+  geom_point(color="darkorange3", size=3)+
+  geom_line(aes(group=Biobank), alpha=0.1)+
+  theme_bw()+
+  xlab("")+
+  theme_classic()+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y =element_blank(),
+        #axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  coord_flip()+
+  ylab("CD122 (gMFI)")+
+  ylim(c(0,NA))+
+  geom_hline(yintercept=0, linetype=2)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)
+#dev.off()
+```
+
+Figure 1C
+```{r}
+#CD127----
+
+CD127<-me.corr %>% 
+  dplyr::filter(type=="Geometric Mean (CD127)") %>% 
+  dplyr::filter(!Subpopulation %in% c("Q3: CD45RA+ , CCR7-_Tcon", "Treg_CD4") )
+
+CD127$Subpopulation<-factor(CD127$Subpopulation, levels = c( "DN_Bcell_Bcell","PB_PC_B-cell","transitional B cell_naive_Bcell","switched_mBC_Bcell","unswitched_MBC_Bcell","naive_Bcell_Bcell","NK56bright_CD19-","NK56dim_CD19-","NKTcell_CD19-","Q3: CD45RA+ , CCR7-_CD8","Q4: CD45RA- , CCR7-_CD8","Q1: CD45RA- , CCR7+_CD8","Q2: CD45RA+ , CCR7+_CD8","aTreg_Treg","rTreg_Treg","Q4: CD45RA- , CCR7-_Tcon","Q1: CD45RA- , CCR7+_Tcon","Q2: CD45RA+ , CCR7+_Tcon"))
+
+
+CD127_stats<- CD127 %>%
+  rstatix::wilcox_test(formula = Isotype_adj ~ Subpopulation, comparisons = mycomparisons, paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD127_stats$p.adj<-format(CD127_stats$p.adj, scientific=T)
+
+CD127statexport<-CD127_stats %>%dplyr::select(group1,group2,n1, n2, statistic, p,p.adj) %>% as.data.frame()
+
+#xlsx::write.xlsx(x = CD127statexport, file = paste0(path.out, "CD127stats.xlsx"), row.names = FALSE)
+
+
+y.max<-max(CD127$Isotype_adj)
+c<-ggplot(CD127, aes(x=Subpopulation, y=Isotype_adj))+
+  geom_point(color="darkseagreen3", size=3)+
+  geom_line(aes(group=Biobank), alpha=0.1)+
+  theme_bw()+
+  xlab("")+
+  theme_classic()+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y =element_blank(),
+        #axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  coord_flip()+
+  ylab("CD127 (gMFI)")+
+  ylim(c(-2000,NA))+
+  geom_hline(yintercept=0, linetype=2)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)+
+  stat_pvalue_manual(data=CD127_stats, bracket.shorten=0.3, label="p.adj.signif",step.increase = .001, bracket.size = 0.001, bracket.nudge.y =-5,coord.flip =T,hide.ns = T )
+
+
+#pdf(paste0(path.out, "Figure_1_E_CD127.pdf"), height = 9, width = 8)
+c
+ggplot(CD127, aes(x=Subpopulation, y=Isotype_adj))+
+  geom_point(color="darkseagreen3", size=3)+
+  geom_line(aes(group=Biobank), alpha=0.1)+
+  theme_bw()+
+  xlab("")+
+  theme_classic()+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y =element_blank(),
+        #axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  coord_flip()+
+  ylab("CD127 (gMFI)")+
+  ylim(c(-2000,NA))+
+  geom_hline(yintercept=0, linetype=2)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)
+#dev.off()
+```
+Figre 1F
+```{r}
+#CD132----
+
+CD132<-me.corr %>% 
+  dplyr::filter(type=="Geometric Mean (CD132)") %>% 
+  dplyr::filter(!Subpopulation %in% c("Q3: CD45RA+ , CCR7-_Tcon", "Treg_CD4") )
+
+CD132$Subpopulation<-factor(CD132$Subpopulation, levels = c( "DN_Bcell_Bcell","PB_PC_B-cell","transitional B cell_naive_Bcell","switched_mBC_Bcell","unswitched_MBC_Bcell","naive_Bcell_Bcell","NK56bright_CD19-","NK56dim_CD19-","NKTcell_CD19-","Q3: CD45RA+ , CCR7-_CD8","Q4: CD45RA- , CCR7-_CD8","Q1: CD45RA- , CCR7+_CD8","Q2: CD45RA+ , CCR7+_CD8","aTreg_Treg","rTreg_Treg","Q4: CD45RA- , CCR7-_Tcon","Q1: CD45RA- , CCR7+_Tcon","Q2: CD45RA+ , CCR7+_Tcon"))
+
+CD132_stats<- CD132 %>%
+  rstatix::wilcox_test(formula = Isotype_adj ~ Subpopulation, comparisons = mycomparisons, paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD132_stats$p.adj<-format(CD132_stats$p.adj, scientific=T)
+
+CD132statexport<-CD132_stats %>%dplyr::select(group1,group2,n1, n2, statistic, p,p.adj) %>% as.data.frame()
+
+#xlsx::write.xlsx(x = CD132statexport, file = paste0(path.out, "CD132stats.xlsx"), row.names = FALSE)
+
+
+y.max<-max(CD132$Isotype_adj)
+d<-ggplot(CD132, aes(x=Subpopulation, y=Isotype_adj))+
+  geom_point(color="mediumorchid4", size=3)+
+  geom_line(aes(group=Biobank), alpha=0.1)+
+  theme_bw()+
+  xlab("")+
+  theme_classic()+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y =element_blank(),
+        #axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  coord_flip()+
+  ylab("CD132 (gMFI)")+
+  ylim(c(0,NA))+
+  geom_hline(yintercept=0, linetype=2)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)+
+  stat_pvalue_manual(data=CD132_stats, bracket.shorten=0.3, label="p.adj.signif",step.increase = .001, bracket.size = 0.001, bracket.nudge.y =-5,coord.flip =T,hide.ns = T )
+
+
+#pdf(paste0(path.out, "Figure_1_F_CD132.pdf"), height = 9, width = 8)
+d
+ggplot(CD132, aes(x=Subpopulation, y=Isotype_adj))+
+  geom_point(color="mediumorchid4", size=3)+
+  geom_line(aes(group=Biobank), alpha=0.1)+
+  theme_bw()+
+  xlab("")+
+  theme_classic()+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y =element_blank(),
+        #axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  coord_flip()+
+  ylab("CD132 (gMFI)")+
+  ylim(c(0,NA))+
+  geom_hline(yintercept=0, linetype=2)+
+  stat_summary(fun=mean, geom="point", size=4, color="black", shape=10)
+#dev.off()
+```
+
+#Visualising the receptor expression for each subset compared to isotype control
+
+```{r}
+#go back to the raw data without normalisation
+#load it if not already done above
+me<-read_excel(paste0(path.input, "Figure_1_fulldata.xlsx"))
+
+me<-me %>% dplyr::filter(!Subpopulation %in% c("Q3: CD45RA+ , CCR7-_Tcon", "Treg_CD4") )
+
+stats<-me %>% dplyr::group_by(Subpopulation, type) %>% rstatix::t_test(measurement~Staintype, paired = T) %>% adjust_pvalue(method = "fdr" ) %>% add_xy_position()
+
+stats1<-stats %>%dplyr::select(group1,group2,n1, n2, statistic, p,p.adj) %>% as.data.frame()
+
+#write all stats
+#xlsx::write.xlsx(x = stats1, file = paste0(path.out, "Figure_S1_Fullstain_vs_Isotype.xlsx"), row.names = FALSE)
+
+
+for (r in unique(me$type)) {
+  receptor.df<- me %>% dplyr::filter(type==r)
+  stats.sub<-stats %>% dplyr::filter(type==r)
+ p<- ggplot(receptor.df, aes(Staintype, measurement))+
+    geom_violin(draw_quantiles = c(0.5))+
+    geom_point()+
+    geom_line(aes(group=Biobank), alpha=0.1)+
+   stat_pvalue_manual(stats.sub, hide.ns = T)+
+    facet_wrap(~Subpopulation, scales = "free")+
+   ggtitle(paste(r))+
+   theme_bw()
+ 
+ print(p)
+}
+
+#make cell lineage categories to split plots
+me$Staintype<-factor(me$Staintype, levels =c("Isoyype", "fullstain"))
+me<-me %>% mutate(lineage=ifelse(short %in% c("DN_Bcell", "naive_Bcell","transitional B cell","switched_mBC", "unswitched_MBC","PB_PC"), "B cell", ifelse(short %in% c("NK56bright", "NK56dim","NKTcell"), "NK", "Tcell")))
+
+me$Subpopulation<-factor(me$Subpopulation, levels = c("naive_Bcell_Bcell","DN_Bcell_Bcell","unswitched_MBC_Bcell","switched_mBC_Bcell", "transitional B cell_naive_Bcell","PB_PC_B-cell", "NK56bright_CD19-" , "NK56dim_CD19-" ,"NKTcell_CD19-","Q2: CD45RA+ , CCR7+_CD8", "Q1: CD45RA- , CCR7+_CD8","Q4: CD45RA- , CCR7-_CD8","Q3: CD45RA+ , CCR7-_CD8","Q2: CD45RA+ , CCR7+_Tcon","Q1: CD45RA- , CCR7+_Tcon","Q4: CD45RA- , CCR7-_Tcon","aTreg_Treg","rTreg_Treg"))
+# B cells
+
+bcell<-me %>% dplyr::filter(lineage=="B cell")
+
+bcell.stats<-bcell %>% dplyr::group_by(Subpopulation, type) %>% rstatix::t_test(measurement~Staintype, paired = T) %>% adjust_pvalue(method = "fdr" ) %>% add_xy_position()
+
+
+if(!exists(paste0(path.out, "Bcells_FullstainvsIsotype"))){dir.create(paste0(path.out, "Bcells_FullstainvsIsotype"))}
+
+for (r in unique(bcell$type)) {
+  receptor.df<- bcell %>% dplyr::filter(type==r)
+  statsub<-bcell.stats %>% dplyr::filter(type==r)
+  # Count number of levels (panels) 
+  k <- receptor.df$Subpopulation %>% unique() %>% length()
+  # Total plot size
+  width <-10
+  height <- 2.5
+   
+ p<- ggplot(receptor.df, aes(Staintype, measurement))+
+    geom_violin(aes(fill=Staintype),draw_quantiles = c(0.5), alpha=.3)+
+    geom_point()+
+    geom_line(aes(group=Biobank), alpha=0.1)+
+   stat_pvalue_manual(statsub,label = "p.adj",hide.ns = T)+
+    facet_wrap(~Subpopulation, nrow = 1)+
+   ggtitle(paste(r))+
+   scale_fill_manual(values = c("grey", "tomato3"))+
+   theme_bw()
+ 
+ pdf(paste0(path.out, "Bcells_FullstainvsIsotype/", r, "_Bcells.pdf"), height = height, width = width)
+ print(p)
+ dev.off()
+}
+
+#NK
+
+NK<-me %>% dplyr::filter(lineage=="NK")
+NK.stats<-NK %>% dplyr::group_by(Subpopulation, type) %>% rstatix::t_test(measurement~Staintype, paired = T) %>% adjust_pvalue(method = "fdr" ) %>% add_xy_position(fun = "mean")
+
+if(!exists(paste0(path.out, "NK_FullstainvsIsotype"))){dir.create(paste0(path.out, "NK_FullstainvsIsotype"))}
+for (r in unique(NK$type)) {
+  receptor.df<- NK %>% dplyr::filter(type==r)
+  stats.sub<-NK.stats %>% dplyr::filter(type==r)
+    k <- receptor.df$Subpopulation %>% unique() %>% length()
+  # Total plot size
+  width <- k * 2
+  height <- 2.5
+ p<- ggplot(receptor.df, aes(Staintype, measurement))+
+    geom_violin(aes(fill=Staintype),draw_quantiles = c(0.5), alpha=.3)+
+    geom_point()+
+    geom_line(aes(group=Biobank), alpha=0.1)+
+   stat_pvalue_manual(stats.sub,label = "p.adj",hide.ns = T, y.position = c(1000))+
+    facet_wrap(~Subpopulation, nrow = 1)+
+   ggtitle(paste(r))+
+   scale_fill_manual(values = c("grey", "tomato3"))+
+   theme_bw()
+ pdf(paste0(path.out, "NK_FullstainvsIsotype/", r, "_NKcells.pdf"), height = height, width = width)
+ print(p)
+ dev.off()
+}
+
+#tcells
+
+t<-me %>% dplyr::filter(lineage=="Tcell")
+#CD8s
+cd8.stats<-t %>% dplyr::filter(str_detect(Subpopulation, "_CD8")) %>% dplyr::group_by(Subpopulation, type) %>% rstatix::t_test(measurement~Staintype, paired = T) %>% adjust_pvalue(method = "fdr" ) %>% add_xy_position(fun = "mean")
+
+if(!exists(paste0(path.out, "CD8s_FullstainvsIsotype"))){dir.create(paste0(path.out, "CD8s_FullstainvsIsotype"))}
+for (r in unique(t$type)) {
+  receptor.df<- t %>% dplyr::filter(type==r) %>% 
+    dplyr::filter(str_detect(Subpopulation, "_CD8"))
+  stats.sub<-cd8.stats %>% dplyr::filter(type==r)
+p<- ggplot(receptor.df, aes(Staintype, measurement))+
+    geom_violin(aes(fill=Staintype),draw_quantiles = c(0.5), alpha=.3)+
+    geom_point()+
+    geom_line(aes(group=Biobank), alpha=0.1)+
+   stat_pvalue_manual(stats.sub,label = "p.adj",hide.ns = T, y.position = c(1500))+
+    facet_wrap(~Subpopulation, nrow = 1)+
+   ggtitle(paste(r))+
+   scale_fill_manual(values = c("grey", "tomato3"))+
+   theme_bw()
+ pdf(paste0(path.out, "CD8s_FullstainvsIsotype/", r, "_CD8s.pdf"), height = 2.5, width = 7.5)
+ print(p)
+ dev.off()
+}
+
+
+#CD4
+cd4.stats<-t %>% dplyr::filter(str_detect(Subpopulation, "_Tcon")) %>% dplyr::group_by(Subpopulation, type) %>% rstatix::t_test(measurement~Staintype, paired = T) %>% adjust_pvalue(method = "fdr" ) %>% add_xy_position(fun = "mean")
+
+if(!exists(paste0(path.out, "Tcon_FullstainvsIsotype"))){dir.create(paste0(path.out, "Tcon_FullstainvsIsotype"))}
+for (r in unique(t$type)) {
+  receptor.df<- t %>% dplyr::filter(type==r) %>% 
+    dplyr::filter(str_detect(Subpopulation, "_Tcon"))
+  stats.sub<-cd4.stats %>% dplyr::filter(type==r)
+p<- ggplot(receptor.df, aes(Staintype, measurement))+
+    geom_violin(aes(fill=Staintype),draw_quantiles = c(0.5), alpha=.3)+
+    geom_point()+
+    geom_line(aes(group=Biobank), alpha=0.1)+
+   stat_pvalue_manual(stats.sub,label = "p.adj",hide.ns = T, y.position = c(1500))+
+    facet_wrap(~Subpopulation, nrow = 1)+
+   ggtitle(paste(r))+
+   scale_fill_manual(values = c("grey", "tomato3"))+
+   theme_bw()
+ pdf(paste0(path.out, "Tcon_FullstainvsIsotype/", r, "_Tcon.pdf"), height = 2.5, width = 6)
+ print(p)
+ dev.off()
+}
+
+#Treg
+treg.stats<-t %>% dplyr::filter(str_detect(Subpopulation, "_Treg")) %>% dplyr::group_by(Subpopulation, type) %>% rstatix::t_test(measurement~Staintype, paired = T) %>% adjust_pvalue(method = "fdr" ) %>% add_xy_position(fun = "mean")
+
+if(!exists(paste0(path.out, "Treg_FullstainvsIsotype"))){dir.create(paste0(path.out, "Treg_FullstainvsIsotype"))}
+for (r in unique(t$type)) {
+  receptor.df<- t %>% dplyr::filter(type==r) %>% 
+    dplyr::filter(str_detect(Subpopulation, "_Treg"))
+  stats.sub<-treg.stats %>% dplyr::filter(type==r)
+p<- ggplot(receptor.df, aes(Staintype, measurement))+
+    geom_violin(aes(fill=Staintype),draw_quantiles = c(0.5), alpha=.3)+
+    geom_point()+
+    geom_line(aes(group=Biobank), alpha=0.1)+
+   stat_pvalue_manual(stats.sub,label = "p.adj",hide.ns = T, y.position = c(1500))+
+    facet_wrap(~Subpopulation, nrow = 1)+
+   ggtitle(paste(r))+
+   scale_fill_manual(values = c("grey", "tomato3"))+
+   theme_bw()
+ pdf(paste0(path.out, "Treg_FullstainvsIsotype/", r, "_Treg.pdf"), height = 2.5, width = 4.5)
+ print(p)
+ dev.off()
+}
+```
+
+```{r}
+#calculate the foldchange over isotype
+fc<-me %>% dplyr::group_by(Subpopulation, type, Staintype) %>% dplyr::summarise(mean_mfi=mean(measurement))
+
+fc1 <- fc %>% 
+  add_column(FC=NA) %>% 
+  as.data.frame()
+
+#loop through the samples calculating the foldchage
+   for(s in unique(fc$Subpopulation)){
+     for(t in unique(fc$type)){
+               fc1[fc1$Subpopulation == s & fc1$type == t , "FC"] <- fc1[fc1$Subpopulation == s & fc1$type == t , "mean_mfi"] / fc1[fc1$Subpopulation == s & fc1$type == t & fc1$Staintype== "Isoyype" , "mean_mfi"] }}
+
+#do a quality check seeing that the Isotypes are now all 1 
+fc1 %>% 
+  group_by(Staintype)%>% 
+  dplyr::summarise(avrg=mean(FC), sd=sd(FC), SEM= sd(FC) / sqrt(n()) ) %>% 
+  as.data.frame()
+
+fc1<-fc1 %>% dplyr::mutate(log2FC=log2(FC))
+#write results
+#xlsx::write.xlsx(x = fc1, file = paste0(path.out, "Figure_S1_Fullstain_vs_Isotype_foldChange.xlsx"), row.names = FALSE)
+
+#for colouring the dots we calculate the mean delta mfi per subset to draw attention to relevant changes
+for(s in unique(fc1$Subpopulation)){
+     for(t in unique(fc1$type)){
+               fc1[fc1$Subpopulation == s & fc1$type == t , "scaling"] <- fc1[fc1$Subpopulation == s & fc1$type == t , "mean_mfi"] - fc1[fc1$Subpopulation == s & fc1$type == t & fc1$Staintype== "Isoyype" , "mean_mfi"] }}
+
+#plot
+volcano<-merge(fc1,stats1) %>% 
+  mutate(plog=-log10(p.adj)) %>% 
+  dplyr::filter(Staintype=="fullstain")
+
+
+pdf(paste0(path.out, "2025-06-02-Volcano_Isotype_vs_fullstain.pdf"), width = 20, height = 5)
+ggplot(data = volcano, aes(x = log2FC, y = plog))+
+  geom_text(aes(label = Subpopulation), nudge_x = 0.1, nudge_y = 0.1 )+
+  geom_point(aes(colour=type, size=log2FC))+
+  geom_hline(yintercept = -log10(0.05))+
+  theme_bw()+
+   theme(text = element_text(size=20),
+        legend.position =  "none")+
+  geom_vline(xintercept =0 )+
+  facet_wrap(~type, scales = "free_x", nrow = 1,axes = "all_y")
+dev.off()
+
+```
+

@@ -1,0 +1,107 @@
+---
+title: "IL2R, IL7R_CD4_Vacc"
+author: "lcegla"
+date: "2023-03-10"
+output: html_document
+---
+
+
+# Libraries
+```{r libs, message = FALSE}
+library(SingleCellExperiment) 
+library(CATALYST) 
+library(flowCore) 
+library(clustree) 
+library(diffcyt) 
+library(readxl)
+library(ggpubr)
+library(tidyverse) 
+library(MetBrewer)
+library(rstatix)
+library(cowplot)
+library(rasterpdf)
+library(MetBrewer)
+library(cowplot)
+library(readxl)
+library(Hmisc)
+library(corrplot)
+
+```
+
+
+```{r create meta, warning=FALSE}
+
+rm(list = ls())
+
+path.input<-"../input/Figure_2/"
+path.Rout <- "../output/Figure_2/" 
+colvec14 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15)]
+```
+
+plotting: isotype corrected are deonoted by _Corr
+
+```{r, fig.height=5, fig.width=8}
+
+me<-read_excel(file.path(paste0(path.input, "Figure_2_CD4_manualgating_results.xlsx")))
+
+me<-me %>% dplyr::filter(short %in% c("Dex-", "Spike+"))
+
+if(!exists(paste0(path.Rout, "CD4_receptor_expression"))){dir.create(paste0(path.Rout, "CD4_receptor_expression"))}
+for(t in unique(me$type)){
+  int <- me %>% dplyr::filter(type == t) #filter for measurements of the current type
+  k <- int$short %>% unique() %>% length()
+  p1 <- ggplot(int, aes(x = Timepoint, y = measurement, colour=Timepoint, fill=Timepoint))+ 
+    geom_violin(aes( fill=Timepoint),colour = 'black')+
+    geom_boxplot(col = 'black', outlier.shape = NA,width=0.1,fill='grey')+
+    geom_line(aes(group=Donor), colour='black', alpha=0.5)+
+    geom_point(colour='black', size = 2)+ #add points
+    theme_cowplot()+ #choose a graphical theme for the plot. another commonly used one is theme_bw()
+    facet_wrap("short", ncol = round(sqrt(4*k/3)))+ #create subplots for each cell type based on column "short". scales = "free_y" to allow individual y-axis
+    labs(title = paste(t, sep="_"), y = t, col = "Timepoint", fill = "Timepoint")+ #add titles for main, legend and axes
+    theme(axis.title.x = element_blank(), #remove x-axis title
+          plot.title = element_text(hjust = 0.5), #move plot title to the center
+          axis.text.x = element_text(angle = 90), #rotate x-axis labels by 90 degree
+          strip.background = element_blank(),
+         strip.clip = "off")+ #remove grey background of sub-plot title
+    scale_color_manual(values = colvec14)+
+    scale_fill_manual(values = colvec14)+
+    stat_compare_means(comparisons = list(c("BSL", "3d"), c("BSL", "10d"), c("BSL", "30d")), method = "wilcox.test", paired = F)+
+    coord_cartesian(clip="off")
+  
+  pdf(paste0(path.Rout, "CD4_receptor_expression/Violin_", t, "_", "stats", "_",".pdf"), height = k+2/round(sqrt(4*k/3))*3.8, width = round(sqrt(4*k/3))*5)
+  print(p1) #print plot (has to be specified in a for-loop)
+  dev.off()
+}
+```
+
+```{r Correlating CD25 level with different markers and or activation}
+me.corr<-read_excel(file.path(paste0(path.input, "Figure_2_CD4_CD25FC.xlsx")))
+
+heatcol<-met.brewer("OKeeffe1",n=100)[100:1:0]
+
+correlation_df_sub<-cor(mesub[,2:ncol(mesub)],mesub[,2:5], method="spearman")
+
+ pdf(paste0(path.Rout, "Fig2_CD4_CD25_Correlation.pdf"), height = 10, width =10)
+corrplot(correlation_df_sub,
+         method="circle", col = heatcol,pch.col = 'grey20', tl.cex=0.7, tl.col = "black",cl.cex = 0.5,
+         cl.ratio = 0.5 )
+dev.off()
+
+
+  pdf(paste0(path.Rout, "Fig2_CD4_CD25vsSpikeFreq.pdf"), height = 5, width = 5)
+ggplot(me.corr,  aes(x=Fold_CD25, y=Freq_D30)) +
+    geom_point(shape = 21, fill = 'maroon1', color = 'maroon1', size =2 )+
+  theme(panel.spacing = unit(0, "lines"), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.x = element_blank())+
+  scale_fill_manual(values=colvec14, drop=F)+
+  scale_color_manual(values=c("gray21", "gray21", "gray21", "gray21"), drop=F)+
+ scale_y_continuous(name= "D30 Cov2-specific CD4 (%)")+
+  scale_x_continuous(name="D3 CD25 (delta gMFI)")+
+  stat_cor()+
+    geom_smooth(method='lm', formula= y~x, colour="black")+
+  theme_classic()
+dev.off()
+
+```

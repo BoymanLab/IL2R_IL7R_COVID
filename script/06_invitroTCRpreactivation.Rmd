@@ -1,0 +1,434 @@
+---
+title: "IL2R IL7R modulation Doseresponse"
+author: "lcegla"
+date: "2023-06-27"
+output: html_document
+
+
+---
+title: "Combined Tcell invitro Data"
+author: "lcegla"
+date: "22/05/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, root.dir = ".")
+```
+
+```{r libs}
+library(readxl) 
+library(tidyverse) 
+library(cowplot) 
+library(MetBrewer) 
+library(ggpubr) 
+library(rstatix) 
+library(xlsx)
+library(scales)
+library(plyr)
+```
+
+```{r set paths}
+rm(list = ls())
+
+
+path.input <- "../input/Figure_6_7_in vitro/"
+path.out <- "../output/Figure_6/"
+
+colvec6<- met.brewer("VanGogh2",n=10)[c(1,4,6,8,7,10)]
+colvec14 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15)] #select three colors because we will have 
+colvec16 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15,4,2)]
+colvec18 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15,4,2,7,18)] 
+colvec22 <- met.brewer("VanGogh2",n=25)[c(1,19,25,3,6,18,10,14, 24,5,17,24,3,20,2,16,15,4,23,2,7,18)] 
+colvec36 <- met.brewer("VanGogh2",n=40)[c(1,19,25,3,6,18,10,14, 24,5,17,24,3,20,2,16,15,4,23,2,7,18,25,40,26,39,27,38,26,37,28,36,29,35,30,31)] 
+colvecIL7<-c("#A09080","#72bcd5","#1e466e")
+colvecIL15<-c("#A09080","#f7aa58","#e76254")
+colvecAllcyto<-c("#A09080","#f7aa58","#e76254" ,"#72bcd5","#1e466e")
+
+```
+
+# Import data
+If the import fails, check that all the files are in the correct location and the correct names are indicated.
+```{r import data}
+df.raw <- read_excel(paste0(path.input, "Figure_6_96h_data.xlsx"))
+
+colnames(df.raw)[1] ="file.name"
+
+
+```
+
+# Create meta file
+
+```{r md}
+#create a meta file from the file names
+md <- data.frame("file.name" = df.raw$file.name)
+
+md<-md %>% separate(file.name, c("preActivation", "ID" ,"Stimulation", "Donor"), remove = FALSE)
+
+
+```
+
+# Create features file
+Create features file with information about the individual measurements. This is written for unformatted flowjo exports. If names of measurements were formatted in flowjo, use the separate function instead.
+```{r features}
+features <- data.frame("analysis" = colnames(df.raw))
+features <- features %>% separate(analysis, into = c("name", "type"), sep = " [|] ", remove = FALSE)
+
+features$short <- str_match(features$name, "^.+\\/(.*)$")[,2] #extract piece after last "/" as population name
+
+features$parent <- features$name %>% str_match(pattern = "(^.+)\\/.*") %>% .[,2] %>% str_match("^.+\\/(.*)") %>% .[,2] #extract the parent population
+features<- features %>% 
+tidyr::unite("Subpopulation", short:parent, remove = FALSE)
+features$marker <- features$type %>% str_match("Geometric Mean \\((.+)\\)") %>% .[,2] #extract the marker for MFIs
+
+```
+
+# Plotting
+## prepare data for plotting
+add meta data and features info, get data to long format and convert to numeric
+```{r prepare Data}
+
+
+dfmd <- merge(df.raw, md, by.y = "file.name")
+ga <- dfmd %>% tidyr::gather(key = "analysis", value = "measurement", features$analysis)
+ga$measurement <- ga$measurement %>% str_replace(" %", "") %>% as.numeric()
+ga <- ga[!is.na(ga$measurement),] #remove rows where measurement is NA
+
+me <- merge(ga, features, by = "analysis")
+me$preActivation <- factor(me$preActivation, levels = c("unstim","noTCR", "withTCR"))
+me$Stimulation<-factor(me$Stimulation, levels = c("0", "IL2", "IL7", "IL15"))
+
+me<-me %>% 
+  dplyr::filter(preActivation !="unstim")
+
+
+
+me.avrg<-me %>%
+  dplyr::group_by(preActivation,Subpopulation, Stimulation) %>% 
+  dplyr::summarise(avrg=mean(measurement), sd=sd(measurement), SEM= sd(measurement) / sqrt(n()) ) %>% 
+  as.data.frame()
+
+
+#xlsx::write.xlsx(me,paste0(path.out, "sourcedat_fig_c.xlsx"))
+```
+
+
+```{r alluvian plots}
+colvec<-met.brewer("Kandinsky",n=10)[c(1,4,7,10)]
+library(ggalluvial)
+me.withTCR<-me.avrg %>% 
+  dplyr::filter(preActivation=="withTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") %>% 
+  dplyr::filter(parent=="CD8")
+
+me.noTCR<-me.avrg %>% 
+  dplyr::filter(preActivation=="noTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") %>% 
+  dplyr::filter(parent=="CD8")
+```
+
+
+
+```{r alluvian Tcons}
+me.withTCR<-me.avrg %>% 
+  dplyr::filter(preActivation=="withTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") %>% 
+  dplyr::filter(parent=="Tcon")
+
+
+me.noTCR<-me.avrg %>% 
+  dplyr::filter(preActivation=="noTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") %>% 
+  dplyr::filter(parent=="Tcon")
+
+ggplot(me.noTCR,
+       aes(x = Stimulation, stratum = quadrant, alluvium = quadrant,
+           fill = quadrant, label = quadrant, y=avrg)) +
+  scale_fill_brewer(type = "qual", palette = "Set2") +
+  geom_flow(stat = "alluvium", lode.guidance = "frontback",
+            color = "darkgray") +
+  geom_stratum() +
+  theme(legend.position = "bottom")+
+  scale_fill_manual(values = colvec)+
+  theme(aspect.ratio = 2)
+
+```
+
+
+```{r alluvian over time for each cytokine}
+
+merged<-read_excel(paste0(path.input, "Figure_6_group_average.xlsx"))
+
+#loop over conditions
+
+
+if(!exists(paste0(path.out, "Alluvian_withTCR_CD8"))){dir.create(paste0(path.out, "Alluvian_withTCR_CD8"))}
+for (cyto in unique(time.withTCR$Stimulation)) {
+  filter.withTCR<-time.withTCR %>% 
+  dplyr::filter(Stimulation==cyto)
+  
+  p<-ggplot(filter.withTCR,
+       aes(x = Time, stratum = quadrant, alluvium = quadrant,
+           fill = quadrant, label = quadrant, y=avrg)) +
+  scale_fill_brewer(type = "qual", palette = "Set2") +
+  geom_flow(stat = "alluvium", lode.guidance = "frontback",
+            color = "darkgray") +
+  geom_stratum() +
+  theme(legend.position = "bottom")+
+  scale_fill_manual(values = colvec)+
+  theme(aspect.ratio = 2)+
+    ggtitle(paste0("withTCR_", cyto))
+  
+  pdf(paste0(path.out, "Alluvian_withTCR_CD8/Alluvian_time_CD8_", cyto,  "_withTCR_"  ,".pdf"),
+      height =10, width = 7)
+print(p)
+dev.off()
+}
+
+
+
+
+time.noTCR<-merged %>% 
+  dplyr::filter(preActivation=="noTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") %>% 
+  dplyr::filter(parent=="CD8")
+
+time.noTCR$quadrant<-factor(time.noTCR$quadrant, levels = c("Ki-67- , CD25+","Ki-67+ , CD25+",
+                                                                "Ki-67+ , CD25-","Ki-67- , CD25-"))
+
+
+
+
+if(!exists(paste0(path.out, "Alluvian_noTCR_CD8"))){dir.create(paste0(path.out, "Alluvian_noTCR_CD8"))}
+for (cyto in unique(time.noTCR$Stimulation)) {
+  filter.noTCR<-time.noTCR %>% 
+  dplyr::filter(Stimulation==cyto)
+  
+  p<-ggplot(filter.noTCR,
+       aes(x = Time, stratum = quadrant, alluvium = quadrant,
+           fill = quadrant, label = quadrant, y=avrg)) +
+  scale_fill_brewer(type = "qual", palette = "Set2") +
+  geom_flow(stat = "alluvium", lode.guidance = "frontback",
+            color = "darkgray") +
+  geom_stratum() +
+  theme(legend.position = "bottom")+
+  scale_fill_manual(values = colvec)+
+  theme(aspect.ratio = 2)+
+    ggtitle(paste0("noTCR_", cyto))
+  
+  pdf(paste0(path.out, "Alluvian_noTCR_CD8/Alluvian_time_CD8_", cyto,  "_noTCR_"  ,".pdf"),
+      height =10, width = 7)
+print(p)
+dev.off()
+}
+
+
+```
+
+```{r do the same for Tcons}
+
+
+time.noTCR_Tcon<-merged %>% 
+  dplyr::filter(preActivation=="noTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") %>% 
+  dplyr::filter(parent=="Tcon")
+
+time.noTCR_Tcon$quadrant<-factor(time.noTCR_Tcon$quadrant, levels = c("Ki-67- , CD25+","Ki-67+ , CD25+",
+                                                                "Ki-67+ , CD25-","Ki-67- , CD25-"))
+
+
+
+
+if(!exists(paste0(path.out, "Alluvian_noTCR_Tcon"))){dir.create(paste0(path.out, "Alluvian_noTCR_Tcon"))}
+for (cyto in unique(time.noTCR_Tcon$Stimulation)) {
+  filter.noTCR<-time.noTCR_Tcon %>% 
+  dplyr::filter(Stimulation==cyto)
+  
+  p<-ggplot(filter.noTCR,
+       aes(x = Time, stratum = quadrant, alluvium = quadrant,
+           fill = quadrant, label = quadrant, y=avrg)) +
+  scale_fill_brewer(type = "qual", palette = "Set2") +
+  geom_flow(stat = "alluvium", lode.guidance = "frontback",
+            color = "darkgray") +
+  geom_stratum() +
+  theme(legend.position = "bottom")+
+  scale_fill_manual(values = colvec)+
+  theme(aspect.ratio = 2)+
+    ggtitle(paste0("noTCR_", cyto))
+  
+  pdf(paste0(path.out, "Alluvian_noTCR_Tcon/Alluvian_time_Tcon_", cyto,  "_noTCR_"  ,".pdf"),
+      height =10, width = 7)
+print(p)
+dev.off()
+}
+
+
+#with TCR
+
+time.withTCR_Tcon<-merged %>% 
+  dplyr::filter(preActivation=="withTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") %>% 
+  dplyr::filter(parent=="Tcon")
+
+time.withTCR_Tcon$quadrant<-factor(time.withTCR_Tcon$quadrant, levels = c("Ki-67- , CD25+","Ki-67+ , CD25+",
+                                                                "Ki-67+ , CD25-","Ki-67- , CD25-"))
+
+
+
+
+if(!exists(paste0(path.out, "Alluvian_withTCR_Tcon"))){dir.create(paste0(path.out, "Alluvian_withTCR_Tcon"))}
+for (cyto in unique(time.withTCR_Tcon$Stimulation)) {
+  filter.noTCR<-time.withTCR_Tcon %>% 
+  dplyr::filter(Stimulation==cyto)
+  
+  p<-ggplot(filter.noTCR,
+       aes(x = Time, stratum = quadrant, alluvium = quadrant,
+           fill = quadrant, label = quadrant, y=avrg)) +
+  scale_fill_brewer(type = "qual", palette = "Set2") +
+  geom_flow(stat = "alluvium", lode.guidance = "frontback",
+            color = "darkgray") +
+  geom_stratum() +
+  theme(legend.position = "bottom")+
+  scale_fill_manual(values = colvec)+
+  theme(aspect.ratio = 2)+
+    ggtitle(paste0("withTCR_", cyto))
+  
+  pdf(paste0(path.out, "Alluvian_withTCR_Tcon/Alluvian_time_Tcon_", cyto,  "_withTCR_"  ,".pdf"),
+      height =10, width = 7)
+print(p)
+dev.off()
+}
+
+
+```
+
+```{r comparing conditions directly}
+mycomparisons<- list(c("0", "IL2"), c("0", "IL7"), c("0", "IL15"))
+
+time.withTCR<-me %>% 
+  dplyr::filter(preActivation=="withTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") 
+
+s<-time.withTCR  %>% dplyr::filter(quadrant=="Q2: Ki-67+ , CD25+") %>% dplyr::filter(parent!="Treg")
+
+s$parent<-factor(s$parent)
+
+s %>% dplyr::group_by(parent,Stimulation) %>% dplyr::summarise(mean=mean(measurement), n=n())
+
+stats<-s %>% dplyr::group_by(parent) %>% rstatix::t_test(measurement~Stimulation, paired = T, comparisons = mycomparisons) %>% adjust_pvalue(method = "fdr") %>% add_xy_position()
+
+pdf(paste0(path.out, "2025-06-11-t96-Ki67posCD25pos.pdf"), width = 5, height = 5)
+ggplot(s, aes(Stimulation, measurement))+
+  geom_bar(aes(fill=Stimulation),stat = "summary", fun="mean")+
+  geom_jitter(width = .06)+
+  geom_line(aes(group=Donor))+
+  stat_pvalue_manual(stats, label = "p")+
+  facet_wrap(~parent)+
+  ggtitle("Ki67posCD25pos_96h")+
+  theme_classic2()+
+  scale_fill_manual(values = colvecAllcyto)
+dev.off()
+
+```
+
+```{r}
+mycomparisons<- list(c("0", "IL2"), c("0", "IL7"), c("0", "IL15"), c("IL2", "IL7"), c("IL2", "IL15"))
+
+time.noTCR<-me %>% 
+  dplyr::filter(preActivation=="noTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") 
+
+s<-time.noTCR  %>% dplyr::filter(quadrant=="Q2: Ki-67+ , CD25+") %>% dplyr::filter(parent!="Treg")
+
+s$parent<-factor(s$parent)
+
+s %>% dplyr::group_by(parent,Stimulation) %>% dplyr::summarise(mean=mean(measurement), n=n())
+
+stats<-s %>% dplyr::group_by(parent) %>% rstatix::t_test(measurement~Stimulation, comparisons = mycomparisons) %>% adjust_pvalue(method = "fdr") %>% add_xy_position()
+
+pdf(paste0(path.out, "2025-06-11-t96-Ki67posCD25pos_noTCR.pdf"), width = 5, height = 5)
+ggplot(s, aes(Stimulation, measurement))+
+  geom_bar(aes(fill=Stimulation),stat = "summary", fun="mean")+
+  geom_jitter(width = .06)+
+  geom_line(aes(group=Donor))+
+  stat_pvalue_manual(stats, label = "p")+
+  facet_wrap(~parent)+
+  ggtitle("Ki67posCD25pos_96h_noTCR")+
+  theme_classic2()+
+  scale_fill_manual(values = colvecAllcyto)
+dev.off()
+```
+
+```{r 48h data}
+t48 <- read_excel(paste0(path.input, "Figure_6_48h_data.xlsx"))
+colnames(t48)[1] ="file.name"
+md <- data.frame("file.name" = t48$file.name)
+
+md<-md %>% separate(file.name, c("preActivation", "ID" ,"Stimulation", "Donor"), remove = FALSE)
+features <- data.frame("analysis" = colnames(t48))
+features <- features %>% separate(analysis, into = c("name", "type"), sep = " [|] ", remove = FALSE)
+
+features$short <- str_match(features$name, "^.+\\/(.*)$")[,2] #extract piece after last "/" as population name
+
+features$parent <- features$name %>% str_match(pattern = "(^.+)\\/.*") %>% .[,2] %>% str_match("^.+\\/(.*)") %>% .[,2] #extract the parent population
+features<- features %>% 
+tidyr::unite("Subpopulation", short:parent, remove = FALSE)
+features$marker <- features$type %>% str_match("Geometric Mean \\((.+)\\)") %>% .[,2] #extract the marker for MFIs
+
+dfmd <- merge(t48, md, by.y = "file.name")
+ga <- dfmd %>% tidyr::gather(key = "analysis", value = "measurement", features$analysis)
+ga$measurement <- ga$measurement %>% str_replace(" %", "") %>% as.numeric()
+ga <- ga[!is.na(ga$measurement),] #remove rows where measurement is NA
+
+me <- merge(ga, features, by = "analysis")
+me$preActivation <- factor(me$preActivation, levels = c("unstim","noTCR", "withTCR"))
+me$Stimulation<-factor(me$Stimulation, levels = c("0", "IL2", "IL7", "IL15"))
+
+me<-me %>% 
+  dplyr::filter(preActivation !="unstim")
+
+time.noTCR<-me %>% 
+  dplyr::filter(preActivation=="noTCR") %>% 
+  dplyr::filter(!Subpopulation %in% c("CD25+_CD8","CD25+_Tcon","CD25+_Treg","Ki-67+_CD8",             
+  "Ki-67+_Tcon","Ki-67+_Treg" )) %>% 
+   separate(Subpopulation, into = c("quadrant", "parent"), sep = "_") 
+
+s<-time.noTCR  %>% dplyr::filter(quadrant=="Q1: Ki-67- , CD25+") %>% dplyr::filter(parent!="Treg")
+
+s$parent<-factor(s$parent)
+
+s %>% dplyr::group_by(parent,Stimulation) %>% dplyr::summarise(mean=mean(measurement), n=n())
+
+stats<-s %>% dplyr::group_by(parent) %>% rstatix::t_test(measurement~Stimulation, comparisons = mycomparisons) %>% adjust_pvalue(method = "fdr") %>% add_xy_position()
+
+pdf(paste0(path.out, "2025-06-11-t96-Ki67negCD25pos_noTCR_48h.pdf"), width = 5, height = 5)
+ggplot(s, aes(Stimulation, measurement))+
+  geom_bar(aes(fill=Stimulation),stat = "summary", fun="mean")+
+  geom_jitter(width = .06)+
+  geom_line(aes(group=Donor))+
+  stat_pvalue_manual(stats, label = "p")+
+  facet_wrap(~parent)+
+  ggtitle("Ki67negCD25pos_48h_noTCR")+
+  theme_classic2()+
+  scale_fill_manual(values = colvecAllcyto)
+dev.off()
+```
+

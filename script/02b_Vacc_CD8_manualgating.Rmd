@@ -1,0 +1,97 @@
+---
+title: "IL2R, IL7R_CD8_Vacc"
+author: "lcegla"
+date: "2023-03-10"
+output: html_document
+---
+
+
+# Libraries
+```{r libs, message = FALSE}
+library(SingleCellExperiment) 
+library(CATALYST) 
+library(flowCore) 
+library(clustree) 
+library(diffcyt) 
+library(readxl)
+library(ggpubr)
+library(tidyverse) 
+library(MetBrewer)
+library(cowplot)
+library(Hmisc)
+library(corrplot)
+```
+
+# Create Meta
+This chunk creates the meta data from the file names (list.files())
+```{r create meta, warning=FALSE}
+rm(list = ls()) 
+path.Rout <- "../output/Figure_2/"
+path.input<-"../input/Figure_2/"
+
+```
+
+
+### Isotype Corrected gMFI
+
+#import manually gated measurements, for yC receptors, we plot both measured gMFI and Isotype substracted mfi denoted by (_Corr)
+
+```{r Comparing Spike and nonspec}
+
+me<-read_excel(file.path(paste0(path.input, "Figure_2_CD8_manualgating_results.xlsx")))
+colvecVacc<- met.brewer("Cassatt1",n=6)[c(4,2,1,5,6)] 
+
+me$Timepoint<-factor(me$Timepoint, levels = c("BSL", "3d", "10d", "30d"))
+
+if(!exists(paste0(path.Rout, "Violin_Grouped"))){dir.create(paste0(path.Rout, "Violin_Grouped"))}
+for(t in unique(me$type)){
+  int <- me %>% dplyr::filter(type == t) #filter for measurements of the current type
+  k <- int$short %>% unique() %>% length()
+  p1 <- ggplot(int, aes(x = Timepoint, y = measurement, colour=Timepoint, fill=Timepoint))+ 
+    geom_violin(aes( fill=Timepoint),colour = 'black')+
+    geom_boxplot(col = 'black', outlier.shape = NA,width=0.1,fill='grey')+
+    geom_line(aes(group=Donor), colour='black', alpha=0.5)+
+    geom_point(colour='black', size = 2)+ 
+    theme_cowplot()+ 
+    facet_wrap(~short, scales = "free_x",strip.position = "bottom")+ 
+    labs(title = paste(t, sep="_"), y = t, col = "Timepoint", fill = "Timepoint")+
+    theme(axis.title.x = element_blank(), 
+          plot.title = element_text(hjust = 0.5), 
+          axis.text.x = element_text(angle = 90), 
+          strip.background = element_blank(),
+         strip.clip = "off")+ 
+    scale_color_manual(values = colvecVacc)+
+    scale_fill_manual(values = colvecVacc)+
+    stat_compare_means(comparisons = list(c("BSL", "3d"), c("BSL", "10d"), c("BSL", "30d")), method = "wilcox.test", paired = F,
+                       symnum.args= list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, Inf), symbols = c("****", "***", "**", "*", "ns")), label = "p.format")+
+    coord_cartesian(clip="off")
+  
+  pdf(paste0(path.Rout, "Violin_Grouped/Violin_", t, "_", "stats", "_",".pdf"), height = k+2/round(sqrt(4*k/3))*3.8, width = round(sqrt(4*k/3))*5)
+  print(p1) 
+  dev.off()
+}
+```
+
+
+```{r Correlation of different receptor subunits}
+#import foldchanges of receptors
+me.Fold<-read_excel(file.path(paste0(path.input, "Figure_2_CD8_CD25FC.xlsx")))
+
+mesub<-me.Fold %>% 
+  select(Donor, Fold_CD25_3d,Fold_CD122_3d,Fold_CD132_3d, Fold_CD127_3d, Fold_CD122_10d, Fold_CD127_10d, Fold_CD127_30d ,`Freq. of Parent_30d`,  Fold_Ki67_3d, Fold_PD1_3d, Fold_PD1_10d,Fold_CD38_3d, Fold_CD38_10d,Fold_HLADR_10d,) %>% 
+  na.omit()
+
+correlation_df_sub<-cor(mesub[,2:ncol(mesub)],mesub[,2:5], method="spearman")
+
+
+heatcol<-met.brewer("OKeeffe1",n=100)[100:1:0]
+
+
+ pdf(paste0(path.Rout, "2023-08-24-Correlation_Foldinduction_CD8.pdf"), height = 10, width =10)
+corrplot(correlation_df_sub,
+         method="circle", col = heatcol,pch.col = 'grey20', tl.cex=0.7, tl.col = "black",cl.cex = 0.5,
+         cl.ratio = 0.5 )
+dev.off()
+
+```
+

@@ -1,0 +1,626 @@
+---
+title: "IL2R, IL7R_CD8_Vacc"
+author: "lcegla"
+date: "2023-03-10"
+output: html_document
+---
+
+
+# Libraries
+```{r libs, message = FALSE}
+library(readxl) 
+library(tidyverse) 
+library(cowplot) 
+library(MetBrewer) 
+library(ggpubr) 
+library(rstatix) 
+library(xlsx)
+library(scales)
+library(plyr)
+library(writexl)
+library(Hmisc)
+```
+
+# Create Meta
+This chunk creates the meta data from the file names (list.files())
+```{r create meta, warning=FALSE}
+rm(list = ls()) 
+path.Rout <- "../output/Figure_4/"
+path.input<-"../input/Figure_4/"
+
+```
+
+
+### prepare data
+
+#import manually gated measurements, for yC receptors, we plot both measured gMFI and Isotype substracted mfi denoted by (_Corr)
+
+```{r load data}
+dat1<-read_excel(file.path(paste0(path.input, "Fig_4_gated_measurements.xlsx")),sheet = "Sheet1")
+dat2<-read_excel(file.path(paste0(path.input, "Fig_4_gated_measurements.xlsx")),sheet = "Sheet2")
+dat<-rbind(dat1, dat2)
+colvecVacc<- met.brewer("Morgenstern",n=6)[c(4,2,1,5,6,3)]
+colvecVacc1<- met.brewer("Tam",n=6)[c(4,2,1,5,6,3)]
+```
+
+```{r metadata}
+md<-data.frame("file.name" = dat$`Sample:`)
+
+md<-md %>% separate(file.name, c("group", "group2" ,"well", "PFCL", "biobank_Code", "birthyear", "ID", "timepoint"), remove = FALSE)
+
+```
+
+```{r features}
+features <- data.frame("analysis" = colnames(dat))
+features <- features %>% separate(analysis, into = c("name", "type"), sep = " [|] ", remove = FALSE)
+
+features$short <- str_match(features$name, "^.+\\/(.*)$")[,2] #extract piece after last "/" as population name
+
+features$parent <- features$name %>% str_match(pattern = "(^.+)\\/.*") %>% .[,2] %>% str_match("^.+\\/(.*)") %>% .[,2] #extract the parent population
+features<- features %>% 
+  dplyr::filter(!is.na(short)) %>% 
+mutate(Subpopulation=paste(short, parent, sep = "_"))
+features$marker <- features$type %>% str_match("Geometric Mean \\((.+)\\)") %>% .[,2] #extract the marker for MFIs
+
+```
+
+```{r combine}
+colnames(dat)[1]<-"file.name"
+
+dfmd <- merge(dat, md, by.y = "file.name")
+ga <- dfmd %>% tidyr::gather(key = "analysis", value = "measurement", features$analysis)
+ga$measurement <- ga$measurement %>% str_replace(" %", "") %>% as.numeric()
+ga <- ga[!is.na(ga$measurement),] #remove rows where measurement is NA
+
+me <- merge(ga, features, by = "analysis")
+
+me <- me %>% dplyr::select(-c(analysis, name, parent, marker))
+
+#xlsx::write.xlsx(x = me, file = paste0(path.Rout, "Bystander_Stats_combined.xlsx"), row.names = FALSE)
+```
+
+```{r Comparing Spike and nonspec}
+#remove isotype ctrl
+me<-me %>% dplyr::filter(biobank_Code!="Isotypecontrol")
+
+me$timepoint<-factor(me$timepoint, levels = c("Healthy", "Acute", "6M", "12M"))
+
+```
+
+```{r EBV specifics}
+#find samples with atleast 5 cells
+EBV_ids<-me %>% dplyr::filter(type=="Count") %>% dplyr::filter(Subpopulation=="APC-Dex_CD8+") %>% dplyr::filter(measurement>4) %>% pull(file.name)
+
+m<-c("Geometric Mean (CD25)","Geometric Mean (CD122)", "Geometric Mean (CD127)","Geometric Mean (CD132)", "Geometric Mean (CD38)", "Geometric Mean (GzmB)", "Geometric Mean (HLA-DR)", "Geometric Mean (Ki-67)", "Geometric Mean (T-bet)")
+
+
+for (marker in m) {
+  t<-me %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="APC-Dex_CD8+") %>% dplyr::filter(file.name %in% EBV_ids) 
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+stats<-t1 %>% rstatix::wilcox_test(measurement~timepoint, comparisons = list(c("Acute", "6M"), c("Acute", "12M"), c("6M", "12M"))) %>% 
+  rstatix:: add_xy_position()
+
+
+p<-ggplot(t1, aes(timepoint, measurement))+
+  geom_violin(aes(fill=timepoint),draw_quantiles = c(0.5))+
+  geom_point()+
+  geom_line(aes(group=ID), linetype="dashed")+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  scale_fill_manual(values = colvecVacc)
+
+#pdf(paste0(path.Rout, "EBV_", marker, ".pdf"), width = 5, height = 3)
+print(p)
+#dev.off()
+}
+```
+
+
+```{r covid specifics}
+spike.ids<-me %>% dplyr::filter(type=="Count") %>% dplyr::filter(Subpopulation=="Pe-Dex_CD8+") %>% dplyr::filter(measurement>4) %>% pull(file.name)
+
+for (marker in m) {
+  t<-me %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Pe-Dex_CD8+") %>% dplyr::filter(file.name %in% spike.ids)
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+  t<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>% rstatix::wilcox_test(measurement~timepoint, comparisons = list(c("Acute", "6M"), c("Acute", "12M"), c("6M", "12M"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(timepoint, measurement))+
+  geom_violin(aes(fill=timepoint),draw_quantiles = c(0.5))+
+  geom_point()+
+ # geom_line(aes(group=ID), linetype="dashed")+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  #geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  scale_fill_manual(values = colvecVacc)
+#pdf(paste0(path.Rout, "COV_", marker, ".pdf"), width = 5, height = 3)
+print(p)
+#dev.off()
+}
+```
+
+```{r IAV}
+IAV.ids<-me %>% dplyr::filter(type=="Count") %>% dplyr::filter(Subpopulation=="Dex-BV421_CD8+") %>% dplyr::filter(measurement>4) %>% pull(file.name)
+
+for (marker in m) {
+  t<-me %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Dex-BV421_CD8+") %>% dplyr::filter(file.name %in% IAV.ids)
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>% rstatix::wilcox_test(measurement~timepoint, comparisons = list(c("Acute", "6M"), c("Acute", "12M"), c("6M", "12M"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(timepoint, measurement))+
+  geom_violin(aes(fill=timepoint),draw_quantiles = c(0.5))+
+  geom_point()+
+  #geom_line(aes(group=ID), linetype="dashed")+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  scale_fill_manual(values = colvecVacc)
+#pdf(paste0(path.Rout, "IAV_", marker, ".pdf"), width = 5, height = 3)
+print(p)
+#dev.off()
+}
+```
+
+
+
+```{r combined dataframe}
+df1<-me %>% dplyr::filter(Subpopulation %in% c("Dex-BV421_CD8+")) %>% dplyr::filter(file.name %in% IAV.ids)
+df2<-me %>% dplyr::filter(Subpopulation %in% c("Pe-Dex_CD8+")) %>% dplyr::filter(file.name %in% spike.ids)
+df3<-me %>% dplyr::filter(Subpopulation %in% c("APC-Dex_CD8+")) %>% dplyr::filter(file.name %in% EBV_ids)
+
+df.comb<-rbind(df1, df2, df3)
+
+#xlsx::write.xlsx(x = df.comb, file = paste0(path.Rout, "all_specifics_df.xlsx"), row.names = FALSE)
+
+df1<-me %>% dplyr::filter(Subpopulation %in% c("Dex-BV421_CD8+")) %>% dplyr::filter(file.name %in% IAV.ids)
+
+df1_wide<-df1 %>% dplyr::select(-c("group", "group2", "well", "PFCL", "Subpopulation")) %>% dplyr::filter(!type %in% c("Count", "Freq. of Parent")) %>% 
+  mutate(corr_id=paste(type, short, sep = "_")) %>% dplyr::select(-c("short", "type")) %>% 
+  pivot_wider(id_cols = c("file.name", "biobank_Code", "birthyear", "ID", "timepoint"), names_from = corr_id, values_from = measurement) %>% dplyr::filter(timepoint!="Healthy") %>% as.data.frame()
+M<-df1_wide %>% dplyr::select(-c(file.name, biobank_Code, ID, timepoint, birthyear)) %>% as.matrix()
+
+res<-rcorr(M)
+cor_matrix<-res$r
+p_matrix<-res$P
+
+
+corrplot::corrplot(cor_matrix, 
+         method = "circle",         
+         order = "AOE",         
+         p.mat = p_matrix,         # add p-value matrix
+        sig.level = c(0.001, 0.01, 0.05), pch.cex = 0.9,
+         insig = 'label_sig', pch.col = 'white',     
+         tl.col = "black",         
+         tl.cex = 0.8,
+        col =colorRampPalette(c("#79ACCF", "white", "#D35A45"))(200) )
+
+```
+
+
+```{r correlation receptors and activation at different timepoints}
+df.comb<-read_excel(paste0(path.Rout, "all_specifics_df.xlsx"))
+
+df.comb_wide<-df.comb %>% dplyr::select(-c("group", "group2", "well", "PFCL", "Subpopulation")) %>% dplyr::filter(!type %in% c("Count", "Freq. of Parent")) %>% 
+  mutate(corr_id=paste(type, short, sep = "_")) %>% dplyr::select(-c("short", "type")) %>% 
+  pivot_wider(id_cols = c("file.name", "biobank_Code", "birthyear", "ID", "timepoint"), names_from = corr_id, values_from = measurement) %>% dplyr::filter(timepoint!="Healthy")
+
+
+ggplot(df.comb_wide, aes(`Geometric Mean (CD127)_Dex-BV421`,`Geometric Mean (HLA-DR)_Dex-BV421`))+
+  geom_point(aes(colour=timepoint))+
+  geom_smooth(method = "lm", colour="black", se = F)+
+  geom_smooth(data=subset(df.comb_wide, timepoint=="Acute"), method='lm',formula=y~x,se=F, colour="red")+
+  geom_smooth(data=subset(df.comb_wide, timepoint=="6M"), method='lm',formula=y~x,se=F, colour="green")+
+  geom_smooth(data=subset(df.comb_wide, timepoint=="12M"), method='lm',formula=y~x,se=F, colour="blue")+
+  stat_cor()+
+  theme_classic()
+
+
+
+
+ggplot(df.comb_wide, aes(`Geometric Mean (CD122)_Dex-BV421`,`Geometric Mean (HLA-DR)_Dex-BV421`))+
+  geom_point(aes(colour=timepoint))+
+  geom_smooth(method = "lm", colour="black", se = F)+
+  geom_smooth(data=subset(df.comb_wide, timepoint=="Acute"), method='lm',formula=y~x,se=F, colour="red")+
+  geom_smooth(data=subset(df.comb_wide, timepoint=="6M"), method='lm',formula=y~x,se=F, colour="green")+
+  geom_smooth(data=subset(df.comb_wide, timepoint=="12M"), method='lm',formula=y~x,se=F, colour="blue")+
+  stat_cor()+
+  theme_classic()
+
+```
+
+
+
+```{r frequencies}
+freq<-df.comb %>% dplyr::filter(type=="Freq. of Parent") %>% dplyr::filter(file.name!="Group_001_B4 LIM-192743-9999-180-Acute_20250711-IMM_cohort_2025_07_11_19_49_38.fcs")
+
+freq$timepoint<-ifelse(is.na(freq$timepoint), "Healthy", paste(freq$timepoint))
+freq$timepoint<-factor(freq$timepoint, levels = c("Healthy", "Acute", "6M", "12M"))
+
+freq$Subpopulation<-factor(freq$Subpopulation, levels = c("Pe-Dex_CD8+", "APC-Dex_CD8+","Dex-BV421_CD8+"))
+
+freq.stats<-freq %>% dplyr::group_by(Subpopulation) %>% rstatix::wilcox_test(measurement~timepoint, comparisons =list(c("Acute", "6M"), c("Acute", "12M"), c("6M", "12M"), c("Healthy", "Acute")) ) %>% add_xy_position()
+
+statsexport<-freq.stats %>% dplyr::select(group1,group2,n1,n2,statistic,p,p.adj,Subpopulation) %>% as.data.frame()
+
+#xlsx::write.xlsx(statsexport, paste0(path.Rout, "freqstats.xlsx"))
+
+ggplot(freq, aes(timepoint, measurement))+
+  geom_boxplot(aes(fill=timepoint), outliers = F)+
+  geom_jitter(width = .05)+
+  #geom_line(aes(group=ID), linetype="dashed")+
+  theme_classic2()+
+  facet_wrap(~Subpopulation, nrow = 1)+
+ stat_pvalue_manual(freq.stats, label = "p")+
+  scale_fill_manual(values = colvecVacc)+
+  scale_y_continuous(transform = "log10")+
+  ylab("log10 Dexpos (%)")
+ggplot(freq, aes(timepoint, measurement))+
+  geom_boxplot(aes(fill=timepoint), outliers = F)+
+  geom_jitter(width = .05)+
+  #geom_line(aes(group=ID), linetype="dashed")+
+  theme_classic2()+
+  facet_wrap(~Subpopulation, nrow = 1)+
+  scale_fill_manual(values = colvecVacc)+
+  scale_y_continuous(transform = "log10", limits = c(0.001, 15))+
+  ylab("log10 Dexpos (%)")
+
+```
+LC dataframe
+```{r colour by severity}
+me1<-read_excel(paste0(path.input, "LC_annotation_data.xlsx"))
+
+me1$timepoint<-factor(me1$timepoint, levels = c("Acute", "6M", "12M"))
+Sevcol<-c("darkgrey", "orange", "red", "black")
+
+for (marker in m) {
+  t<-me1 %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Pe-Dex_CD8+") %>% dplyr::filter(file.name %in% IAV.ids)
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>% rstatix::wilcox_test(measurement~timepoint, comparisons = list(c("Acute", "6M"), c("Acute", "12M"), c("6M", "12M"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(timepoint, measurement))+
+  geom_violin(draw_quantiles = c(0.5))+
+  geom_jitter(aes(colour=Severity), width = .04, size=2)+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  scale_colour_manual(values = Sevcol)
+print(p)
+
+}
+```
+
+
+```{r}
+for (marker in m) {
+  t<-me1 %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Dex-BV421_CD8+") %>% dplyr::filter(file.name %in% IAV.ids)
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(!timepoint %in% c("Healthy", "Acute"))
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>% dplyr::group_by(timepoint) %>% rstatix::wilcox_test(measurement~LC_12M, comparisons = list(c("NO", "YES"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(LC_6M, measurement))+
+  geom_boxplot(draw_quantiles = c(0.5))+
+  geom_jitter(aes(colour=Severity), width = .04, size=2)+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  facet_wrap(~timepoint)+
+    scale_colour_manual(values = Sevcol)
+
+print(p)
+
+}
+```
+
+```{r}
+for (marker in m) {
+  t<-me1 %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Pe-Dex_CD8+") %>% dplyr::filter(file.name %in% spike.ids)
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(!timepoint %in% c("Healthy", "Acute")) %>% dplyr::filter(Severity!="Severe")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>%dplyr::group_by(timepoint) %>%  rstatix::t_test(measurement~LC_12M, comparisons = list(c("NO", "YES"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(LC_12M, measurement))+
+  geom_boxplot()+
+  geom_jitter(aes(colour=Severity), width = .04, size=2)+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  facet_wrap(~timepoint)+
+    scale_colour_manual(values = Sevcol)
+print(p)
+
+}
+
+```
+
+```{r source data}
+t<-me1 %>% dplyr::filter(type=="Geometric Mean (CD25)") %>% dplyr::filter(Subpopulation %in% c("Pe-Dex_CD8+", "Dex-BV421_CD8+")) %>% dplyr::filter(file.name %in% spike.ids)
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(!timepoint %in% c("Healthy", "Acute")) %>% dplyr::filter(Severity!="Severe")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>%dplyr::group_by(timepoint) %>%  rstatix::t_test(measurement~LC_12M, comparisons = list(c("NO", "YES"))) %>% 
+  rstatix:: add_xy_position()
+
+#xlsx::write.xlsx(t1, paste0(path.Rout, "sourcedat_S7d.xlsx"))
+```
+
+
+```{r memory phenotype of the different antigenspecific populations}
+df.comb.mem<-me1 %>% 
+  dplyr::filter(type=="Freq. of Parent") %>% dplyr::filter(!short %in% c("APC-Dex","Pe-Dex","Dex-BV421")) %>% separate(Subpopulation, into = c("Quadrant", "parent"),sep = "_", remove = F)
+
+df11<-df.comb.mem %>% dplyr::filter(parent %in% c("Dex-BV421")) %>% dplyr::filter(file.name %in% IAV.ids)
+df21<-df.comb.mem %>% dplyr::filter(parent %in% c("Pe-Dex")) %>% dplyr::filter(file.name %in% spike.ids)
+df31<-df.comb.mem %>% dplyr::filter(parent %in% c("APC-Dex")) %>% dplyr::filter(file.name %in% EBV_ids)
+
+mem<-rbind(df11, df21, df31)
+
+
+mem2<-mem %>% dplyr::filter(Quadrant!="Q2: CD45RA+ , CCR7+")
+
+m12<-mem2 %>% dplyr::filter(timepoint=="12M") %>% dplyr::filter(parent !="Pe-Dex")
+
+stats<-m12 %>% dplyr::group_by(Quadrant) %>% rstatix::t_test(measurement~parent) %>% add_xy_position()
+
+
+ggplot(m12, aes(parent, measurement)) + 
+  geom_violin(draw_quantiles = c(0.5))+
+  geom_point()+
+  stat_pvalue_manual(stats,label = "p")+
+  facet_wrap(~Quadrant, nrow = 1)+
+  theme_classic2()
+
+#xlsx::write.xlsx(m12, paste0(path.Rout, "sourcedatS6b.xlsx"))
+```
+
+```{r polyclonal T cells}
+dat1<-read_excel(file.path(paste0(path.input, "Fig_4_gated_measurements_polyclonalTcells.xlsx")),sheet = "Sheet1")
+dat2<-read_excel(file.path(paste0(path.input, "Fig_4_gated_measurements_polyclonalTcells.xlsx")),sheet = "Sheet2")
+dat<-rbind(dat1, dat2)
+
+md<-data.frame("file.name" = dat$`Sample:`)
+
+md<-md %>% separate(file.name, c("group", "group2" ,"well", "PFCL", "biobank_Code", "birthyear", "ID", "timepoint"), remove = FALSE)
+
+features <- data.frame("analysis" = colnames(dat))
+features <- features %>% separate(analysis, into = c("name", "type"), sep = " [|] ", remove = FALSE)
+
+features$short <- str_match(features$name, "^.+\\/(.*)$")[,2] #extract piece after last "/" as population name
+
+features$parent <- features$name %>% str_match(pattern = "(^.+)\\/.*") %>% .[,2] %>% str_match("^.+\\/(.*)") %>% .[,2] #extract the parent population
+features<- features %>% 
+  dplyr::filter(!is.na(short)) %>% 
+mutate(Subpopulation=paste(short, parent, sep = "_"))
+features$marker <- features$type %>% str_match("Geometric Mean \\((.+)\\)") %>% .[,2] #extract the marker for MFIs
+colnames(dat)[1]<-"file.name"
+
+dfmd <- merge(dat, md, by.y = "file.name")
+ga <- dfmd %>% tidyr::gather(key = "analysis", value = "measurement", features$analysis)
+ga$measurement <- ga$measurement %>% str_replace(" %", "") %>% as.numeric()
+ga <- ga[!is.na(ga$measurement),] #remove rows where measurement is NA
+
+me <- merge(ga, features, by = "analysis")
+
+me <- me %>% dplyr::select(-c(analysis, name, parent, marker))
+#xlsx::write.xlsx(x = me, file = paste0(path.Rout, "Bystander_Stats_combined-polyclonal.xlsx"), row.names = FALSE)
+
+```
+
+```{r}
+me<-read_excel(paste0(path.Rout, "Bystander_Stats_combined-polyclonal.xlsx"))
+
+#remove isotype ctrl
+me<-me %>% dplyr::filter(biobank_Code!="Isotypecontrol")
+
+me$timepoint<-factor(me$timepoint, levels = c("Healthy", "Acute", "6M", "12M"))
+```
+
+```{r}
+m<-c("Geometric Mean (CD25)","Geometric Mean (CD122)", "Geometric Mean (CD127)","Geometric Mean (CD132)", "Geometric Mean (CD38)", "Geometric Mean (GzmB)", "Geometric Mean (HLA-DR)", "Geometric Mean (Ki-67)", "Geometric Mean (T-bet)")
+
+
+for (marker in m) {
+  t<-me %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Dexneg_CD8+") 
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+stats<-t1 %>% rstatix::wilcox_test(measurement~timepoint, comparisons = list(c("Acute", "6M"), c("Acute", "12M"), c("6M", "12M"))) %>% 
+  rstatix:: add_xy_position()
+
+
+p<-ggplot(t1, aes(timepoint, measurement))+
+  geom_violin(aes(fill=timepoint),draw_quantiles = c(0.5))+
+  geom_point()+
+  geom_line(aes(group=ID), linetype="dashed")+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  scale_fill_manual(values = colvecVacc)
+
+
+print(p)
+
+}
+```
+
+
+```{r polyclonal severity}
+sev<-read_excel(paste0(path.input, "Severity_pat.xlsx"))
+me$ID<-as.numeric(me$ID)
+me1<-merge(me, sev, by = "ID")
+Sevcol<-c("darkgrey", "orange", "red", "black")
+
+for (marker in m) {
+  t<-me1 %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Dexneg_CD8+") 
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>% rstatix::wilcox_test(measurement~timepoint, comparisons = list(c("Acute", "6M"), c("Acute", "12M"), c("6M", "12M"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(timepoint, measurement))+
+  geom_violin(draw_quantiles = c(0.5))+
+  geom_jitter(aes(colour=Severity), width = .04, size=2)+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  scale_colour_manual(values = Sevcol)
+
+print(p)
+
+}
+```
+
+
+```{r}
+for (marker in m) {
+  t<-me1 %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Dexneg_CD8+") 
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>% dplyr::group_by(timepoint)%>%  rstatix::wilcox_test(measurement~LC_12M, comparisons = list(c("NO", "YES"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(LC_12M, measurement))+
+  geom_boxplot(outliers = F)+
+  geom_jitter(aes(colour=Severity), width = .04, size=2)+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  #geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  facet_wrap(~timepoint)+
+    scale_colour_manual(values = Sevcol)
+pdf(paste0(path.Rout, "polyclonalCD8s_LC_", marker, ".pdf"), width = 5, height = 3)
+print(p)
+dev.off()
+}
+
+
+for (marker in m) {
+  t<-me1 %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Tcon_CD4+") 
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>% dplyr::group_by(timepoint)%>%  rstatix::wilcox_test(measurement~LC_12M, comparisons = list(c("NO", "YES"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(LC_12M, measurement))+
+  geom_boxplot(outliers = F)+
+  geom_jitter(aes(colour=Severity), width = .04, size=2)+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  #geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  facet_wrap(~timepoint)+
+    scale_colour_manual(values = Sevcol)
+pdf(paste0(path.Rout, "polyclonalCD4s_LC_", marker, ".pdf"), width = 5, height = 3)
+print(p)
+dev.off()
+}
+```
+
+```{r source data}
+ t<-me1 %>% dplyr::filter(type=="Geometric Mean (CD25)") %>% dplyr::filter(Subpopulation %in% c("Dexneg_CD8+","Tcon_CD4+")) 
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+#xlsx::write.xlsx(t1, paste0(path.Rout, "sourcedat_S7c.xlsx"))
+```
+
+
+```{r number of symptoms}
+me1$LC_Nr_Symptoms<-factor(me1$LC_Nr_Symptoms)
+
+for (marker in m) {
+  t<-me1 %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Dexneg_CD8+") 
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>% dplyr::group_by(timepoint)%>%  rstatix::wilcox_test(measurement~LC_Nr_Symptoms, comparisons = list(c("0", "1"), c("1", "2"), c("2", "3"), c("3", "4"), c("0", "2"),c("0", "3"), c("0", "4"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(LC_Nr_Symptoms, measurement))+
+  geom_violin(draw_quantiles = c(0.5))+
+  geom_jitter( width = .04, size=2)+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  #geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  facet_wrap(~timepoint)+
+    scale_colour_manual(values = Sevcol)
+
+print(p)
+
+}
+
+
+for (marker in m) {
+  t<-me1 %>% dplyr::filter(type==marker) %>% dplyr::filter(Subpopulation=="Tcon_CD4+") 
+means<-t  %>% dplyr::group_by(timepoint) %>% dplyr::summarise(meangMFI=mean(measurement))
+t<-t %>% dplyr::filter(timepoint!="Healthy")
+t1<-t %>% dplyr::filter(timepoint!="Healthy")
+
+t1$biobank_Code<-factor(t1$biobank_Code)
+stats<-t1 %>% dplyr::group_by(timepoint)%>%  rstatix::wilcox_test(measurement~LC_Nr_Symptoms, comparisons = list(c("0", "1"), c("1", "2"), c("2", "3"), c("3", "4"), c("0", "2"),c("0", "3"), c("0", "4"))) %>% 
+  rstatix:: add_xy_position()
+
+p<-ggplot(t1, aes(LC_Nr_Symptoms, measurement))+
+  geom_violin(draw_quantiles = c(0.5))+
+  geom_jitter( width = .04, size=2)+
+  theme_classic2()+
+  ggtitle(marker)+
+  stat_pvalue_manual(stats,label = "p")+
+  #geom_hline(yintercept = as.numeric( means[1,2]), linetype="dashed")+
+  facet_wrap(~timepoint)+
+    scale_colour_manual(values = Sevcol)
+
+print(p)
+
+}
+```

@@ -1,0 +1,380 @@
+---
+title: "Somascan6M-Figure 5"
+output: html_document
+date: "2023-09-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+# devtools::install_github("SomaLogic/SomaDataIO")
+library("SomaDataIO")
+library("readxl")
+library("magrittr")
+library("janitor")
+library("grid")
+library("gridExtra")
+library("mgcv")
+library("ggpubr")
+library("ggforce")
+library("cowplot")
+library("ggrepel")
+library("purrr")
+library("rstatix")
+library("tidyverse")
+library("corrplot")
+library("gplots")
+library("pheatmap")
+library("RColorBrewer")
+library("matrixStats")
+library(readxl) 
+library(tidyverse) 
+library(cowplot) 
+library(MetBrewer) 
+library(ggpubr) 
+library(rstatix) 
+library(scales)
+library(plyr)
+library(writexl)
+
+rm(list = ls())
+
+
+path.input <- "../input/Figure_5/"
+path.out <- "../output/Figure_5/"
+
+
+colvec14 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15)] #select three colors because we will have 
+colvec16 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15,4,2)]
+colvec18 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15,4,2,7,18)] 
+colvec22 <- met.brewer("VanGogh2",n=25)[c(1,19,25,3,6,18,10,14, 24,5,17,24,3,20,2,16,15,4,23,2,7,18)] 
+colvec36 <- met.brewer("VanGogh2",n=40)[c(1,19,25,3,6,18,10,14, 24,5,17,24,3,20,2,16,15,4,23,2,7,18,25,40,26,39,27,38,26,37,28,36,29,35,30,31)] 
+
+colvSev <- met.brewer("Homer2",n=6)[c(5,2,1)]
+colSev2<-met.brewer("Nizami", n=8)[c(8,2)]
+
+
+```
+
+
+```{r}
+ClinicallMerge<- read_excel(paste0(path.input, "Fig5_cytonormdata.xlsx"))
+
+CinicallMerge.Healthy<-read_excel(paste0(path.input, "Fig5_cytonormdata_paired_Healthy.xlsx"))
+
+my_adat <- read_adat(paste0(path.input,"SS-217251.hybNorm.medNormInt.plateScale.Calibration.anmlQC.qcCheck.anmlSMP.adat"))
+my_adat0 <- my_adat
+is.soma_adat(my_adat)
+
+my_adat  <- my_adat %>%
+  filter(SampleType == "Sample") %>%
+  log10() %>% as.data.frame()
+
+is.soma_adat(my_adat)
+
+
+dim(my_adat)  #7,596
+my_adat %>% getAnalyteInfo() %>% tabyl(Organism) #Human 7335
+#Replace typos in SampleId (Pat 120 and 120.2)
+
+my_adat[my_adat$SampleId == "COV-ZH-120.2","SampleId"] <- "COV-ZH 120.2"
+my_adat[my_adat$SampleId == "COV-ZH-120","SampleId"] <- "COV-ZH 120"
+
+
+#seq.14049.17 = IL7
+#seq.4140.3 I=IL7
+#seq.14054.17 = IL15Ra
+#seq.19568.17 = IL15
+#seq.4337.49=CRP
+#seq.3037.62=IL1b
+#seq.4673.13=IL6
+#seq.5692.79=TNFa
+#seq.15346.31=IFNy
+#seq.2773.50=IL10
+#seq.3447.64=IL-8
+
+my_adat.subset<- my_adat %>% 
+  select(SampleId,seq.14049.17, seq.4140.3, seq.14054.17, seq.19568.17, seq.4337.49, seq.3037.62, seq.4673.13, seq.5692.79, seq.15346.31,
+         seq.2773.50, seq.3447.64)
+
+my_adat.subset.rename<-my_adat.subset %>% 
+separate(SampleId, into = c("p1","p2","p3", "p4")) %>% 
+  mutate(ID=paste(p1, p2, p3, sep = "_")) %>% 
+  mutate(ID1=paste(ID, p4, sep = "."))
+
+my_adat.subset.rename$ID1<-sub("*\\.NA", "",my_adat.subset.rename$ID1)
+
+me.merge<-merge(my_adat.subset.rename, ClinicallMerge, by.x = "ID1", by.y="SampleID") %>% as.data.frame()
+
+
+me.acute<-me.merge %>% 
+  dplyr::filter(Sampling_timepoint=="ONE")
+
+
+ggplot(me.acute, mapping = aes(x=`Tcells_CD25_gMFI`, y=seq.14054.17))+
+  geom_point(shape = 21, fill = 'maroon1', color = 'maroon1', size =2 )+
+  theme(panel.spacing = unit(0, "lines"), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.x = element_blank())+
+  scale_fill_manual(values=colvec14, drop=F)+
+  scale_color_manual(values=c("gray21", "gray21", "gray21", "gray21"), drop=F)+
+  scale_x_continuous()+
+  stat_cor()+
+    geom_smooth(method='lm', formula= y~x, colour="black")+
+  theme_classic()
+
+
+
+#seq.14049.17 = IL7
+#seq.4140.3 I=IL7
+#seq.14054.17 = IL15Ra
+#seq.19568.17 = IL15
+
+
+ggplot(me.acute, mapping = aes(x=`Tcells_CD25_gMFI`, y=seq.19568.17))+
+  geom_point(shape = 21, fill = 'maroon1', color = 'maroon1', size =2 )+
+  theme(panel.spacing = unit(0, "lines"), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.x = element_blank())+
+  scale_fill_manual(values=colvec14, drop=F)+
+  scale_color_manual(values=c("gray21", "gray21", "gray21", "gray21"), drop=F)+
+  scale_x_continuous()+
+  stat_cor()+
+    geom_smooth(method='lm', formula= y~x, colour="black")+
+  theme_classic()
+
+
+
+
+ggplot(me.acute, mapping = aes(x=CD3c, y=seq.14049.17))+
+  geom_point(shape = 21, fill = 'maroon1', color = 'maroon1', size =2 )+
+  theme(panel.spacing = unit(0, "lines"), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.x = element_blank())+
+  scale_fill_manual(values=colvec14, drop=F)+
+  scale_color_manual(values=c("gray21", "gray21", "gray21", "gray21"), drop=F)+
+  scale_x_continuous()+
+  stat_cor()+
+    geom_smooth(method='lm', formula= y~x, colour="black")+
+  theme_classic()
+
+
+```
+
+
+
+```{r IL15 across timepoints}
+
+minmax_scale <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+
+
+pdf(paste0(path.out, "Fig5-TcellCD25_IL15.pdf"), height = 5, width = 7)
+ggplot(me.merge,  aes(x=Tcells_CD25_gMFI, y=log10(seq.19568.17))) +
+    geom_point(aes(fill=Sampling_timepoint),shape = 21, size =2 )+
+  theme(panel.spacing = unit(0, "lines"), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.x = element_blank())+
+  scale_fill_manual(values=colvec14, drop=F)+
+  scale_color_manual(values=c("gray21", "gray21", "gray21", "gray21"), drop=F)+
+  scale_x_continuous(name="Tcells_CD25")+
+  scale_y_continuous(name= "IL-15 (RFU)")+
+   geom_smooth(method='lm', formula= y~x, colour="black")+
+  geom_smooth(data=subset(me.merge, Sampling_timepoint=="ONE"), method='lm',formula=y~x,se=F, colour="red")+
+  geom_smooth(data=subset(me.merge, Sampling_timepoint=="SIX"), method='lm',formula=y~x,se=F, colour="green")+
+  stat_cor()+
+  theme_classic()
+dev.off()
+
+
+pdf(paste0(path.out, "Fig5-TcellCounts_IL15.pdf"), height = 5, width = 7)
+ggplot(me.merge,  aes(x=CD3c, y=log10(seq.19568.17))) +
+    geom_point(aes(fill=Sampling_timepoint),shape = 21, size =2 )+
+  theme(panel.spacing = unit(0, "lines"), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.x = element_blank())+
+  scale_fill_manual(values=colvec14, drop=F)+
+  scale_color_manual(values=c("gray21", "gray21", "gray21", "gray21"), drop=F)+
+  scale_x_continuous(name="CD3c")+
+  scale_y_continuous(name= "IL-15 (RFU)")+
+   geom_smooth(method='lm', formula= y~x, colour="black")+
+  geom_smooth(data=subset(me.merge, Sampling_timepoint=="ONE"), method='lm',formula=y~x,se=F, colour="red")+
+  geom_smooth(data=subset(me.merge, Sampling_timepoint=="SIX"), method='lm',formula=y~x,se=F, colour="green")+
+  stat_cor()+
+  theme_classic()
+dev.off()
+
+pdf(paste0(path.out, "Fig5-TcellCD25_IL7.pdf"), height = 5, width = 7)
+ggplot(me.merge,  aes(x=Tcells_CD25_gMFI, y=log10(seq.4140.3))) +
+    geom_point(aes(fill=Sampling_timepoint),shape = 21, size =2 )+
+  theme(panel.spacing = unit(0, "lines"), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.x = element_blank())+
+  scale_fill_manual(values=colvec14, drop=F)+
+  scale_color_manual(values=c("gray21", "gray21", "gray21", "gray21"), drop=F)+
+  scale_x_continuous(name="Tcells_CD25")+
+  scale_y_continuous(name= "IL-7 (RFU)")+
+   geom_smooth(method='lm', formula= y~x, colour="black")+
+  geom_smooth(data=subset(me.merge, Sampling_timepoint=="ONE"), method='lm',formula=y~x,se=F, colour="red")+
+  geom_smooth(data=subset(me.merge, Sampling_timepoint=="SIX"), method='lm',formula=y~x,se=F, colour="green")+
+  stat_cor()+
+  theme_classic()
+dev.off()
+
+
+sourcedat<-me.merge %>% dplyr::select(ID1,SevMax2,Sampling_timepoint,seq.4140.3,seq.19568.17, Tcells_CD25_gMFI,Tcells_CD127_gMFI,CD3c)
+#xlsx::write.xlsx(x = sourcedat, file = paste0(path.out, "fig5_sourcedata_b_c_d.xlsx"), row.names = FALSE)
+
+sourcedat.sup<-me.merge %>% dplyr::select(ID1,SevMax2,Sampling_timepoint,seq.4140.3,seq.19568.17,CD4_CD25_gMFI, CD8_CD25_gMFI ,CD3c,CD8c, CD4c)
+#xlsx::write.xlsx(x = sourcedat.sup, file = paste0(path.out, "figS8c_e_sourcedata.xlsx"), row.names = FALSE)
+```
+
+
+```{r}
+#do it for all patients not just the ones where we have flow Data
+#instead of merging with the Clinicall subset with alread the IL2RIl7R Flow,
+#we merge with whole Clinicall
+
+Clinicall<-read_excel(paste0(path.input, "ClinicAll_230516.xlsx"))
+
+
+me.mergeall<-merge(my_adat.subset.rename, Clinicall, by.x = "ID1", by.y="SampleID")
+
+
+countsMerged<- me.mergeall %>%
+  dplyr::select(Sampling_month) %>% 
+  dplyr::group_by(Sampling_month) %>% 
+  dplyr::summarise(count= n() ) 
+ 
+
+me.mergeall<-me.mergeall %>% 
+  dplyr::filter(Sampling_month!="TWO")
+
+
+
+countsMerged.all<- me.mergeall %>%
+  dplyr::select(Sampling_month, SevMax2) %>% 
+  dplyr::group_by(Sampling_month,SevMax2) %>% 
+  dplyr::summarise(count= n() ) 
+ 
+healthylevel<-me.mergeall %>% dplyr::group_by(Sampling_month, SevMax2) %>% dplyr::summarise(meanIL7=mean(seq.14049.17), sd_IL7=sd(seq.14049.17), n_IL7=n(), mean_IL15=mean(seq.19568.17), sd_IL15=sd(seq.19568.17), n_il15=n())
+```
+
+
+```{r}
+GeomSplitViolin <- ggproto("GeomSplitViolin", GeomViolin,
+  draw_group = function(self, data, ..., draw_quantiles = NULL) {
+    # Original function by Jan Gleixner (@jan-glx)
+    # Adjustments by Wouter van der Bijl (@Axeman)
+    data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+    grp <- data[1, "group"]
+    newdata <- plyr::arrange(transform(data, x = if (grp %% 2 == 1) xminv else xmaxv), if (grp %% 2 == 1) y else -y)
+    newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+    newdata[c(1, nrow(newdata) - 1, nrow(newdata)), "x"] <- round(newdata[1, "x"])
+    if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+      stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 1))
+      quantiles <- create_quantile_segment_frame(data, draw_quantiles, split = TRUE, grp = grp)
+      aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+      aesthetics$alpha <- rep(1, nrow(quantiles))
+      both <- cbind(quantiles, aesthetics)
+      quantile_grob <- GeomPath$draw_panel(both, ...)
+      ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+    }
+    else {
+      ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+    }
+  }
+)
+
+create_quantile_segment_frame <- function(data, draw_quantiles, split = FALSE, grp = NULL) {
+  dens <- cumsum(data$density) / sum(data$density)
+  ecdf <- stats::approxfun(dens, data$y)
+  ys <- ecdf(draw_quantiles)
+  violin.xminvs <- (stats::approxfun(data$y, data$xminv))(ys)
+  violin.xmaxvs <- (stats::approxfun(data$y, data$xmaxv))(ys)
+  violin.xs <- (stats::approxfun(data$y, data$x))(ys)
+  if (grp %% 2 == 0) {
+    data.frame(
+      x = ggplot2:::interleave(violin.xs, violin.xmaxvs),
+      y = rep(ys, each = 2), group = rep(ys, each = 2)
+    )
+  } else {
+    data.frame(
+      x = ggplot2:::interleave(violin.xminvs, violin.xs),
+      y = rep(ys, each = 2), group = rep(ys, each = 2)
+    )
+  }
+}
+
+geom_split_violin <- function(mapping = NULL, data = NULL, stat = "ydensity", position = "identity", ..., 
+                              draw_quantiles = NULL, trim = TRUE, scale = "area", na.rm = FALSE, 
+                              show.legend = NA, inherit.aes = TRUE) {
+  layer(data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin, position = position, 
+        show.legend = show.legend, inherit.aes = inherit.aes, 
+        params = list(trim = trim, scale = scale, draw_quantiles = draw_quantiles, na.rm = na.rm, ...))
+}
+```
+
+
+
+
+
+```{r IL15}
+me.healthyvssev<-me.mergeall %>% 
+  dplyr::filter(SevMax2 %in% c("Mild", "Severe"))
+
+
+testIL15<-me.healthyvssev %>%
+  group_by(Sampling_month) %>% 
+  rstatix::wilcox_test(formula = seq.19568.17 ~ SevMax2, comparisons = list(c("Mild", "Severe"))) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+testIL15$p.adj<-format(testIL15$p.adj, scientific=T)
+
+
+ pdf(paste0(path.out, "Fig5-IL15_MildvsSevere.pdf"),height = 3, width = 5)
+ggplot(data = me.healthyvssev, aes(x = Sampling_month, y = seq.19568.17, fill=SevMax2))+
+  geom_split_violin(trim = F, draw_quantiles = 0.5)+
+  scale_fill_manual(values=colSev2,  name = "")+
+  theme_bw() +
+  theme_classic()+
+    geom_boxplot(width = 0.25, notch = FALSE, notchwidth = .4, outlier.shape = NA, coef=0, alpha = 0.5)+
+     geom_point(shape=16,position=position_dodge(width=.25))
+ dev.off()
+
+
+#xlsx::write.xlsx(x = me.healthyvssev, file = paste0(path.out, "fig5_sourcedata.xlsx"), row.names = FALSE)
+```
+
+
+```{r IL7}
+testIL7<-me.healthyvssev %>%
+  group_by(Sampling_month) %>% 
+  rstatix::wilcox_test(formula = seq.14049.17 ~ SevMax2, comparisons = list(c("Mild", "Severe"))) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+testIL7$p.adj<-format(testIL7$p.adj, scientific=T)
+
+ pdf(paste0(path.out, "Fig5-IL7_MildvsSevere.pdf"),height = 3, width = 5)
+ggplot(data = me.healthyvssev, aes(x = Sampling_month, y = seq.14049.17, fill=SevMax2))+
+  geom_split_violin(trim = F, draw_quantiles = 0.5)+
+  scale_fill_manual(values=colSev2,  name = "")+
+  theme_bw() +
+  theme_classic()+
+    geom_boxplot(width = 0.25, notch = FALSE, notchwidth = .4, outlier.shape = NA, coef=0, alpha = 0.5)+
+     geom_point(shape=16,position=position_dodge(width=.25))
+ dev.off()
+```
+
+
+

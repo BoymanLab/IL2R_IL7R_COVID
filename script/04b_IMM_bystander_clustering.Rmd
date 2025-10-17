@@ -1,0 +1,185 @@
+---
+title: "IL2R, IL7R bystander"
+author: "lcegla"
+date: "2023-03-10"
+output: html_document
+---
+
+
+# Libraries
+```{r libs, message = FALSE}
+library(SingleCellExperiment) 
+library(CATALYST) 
+library(flowCore) 
+library(clustree) 
+library(diffcyt) 
+library(readxl)
+library(ggpubr)
+library(tidyverse) 
+library(MetBrewer)
+library(rstatix)
+library(cowplot)
+```
+
+# Create Meta
+This chunk creates the meta data from the file names (list.files())
+```{r create meta, warning=FALSE}
+rm(list = ls()) #clears R's memory
+
+path.Rout <- "../output/Figure_4/" #set path for output files
+path.input<-"../input/Figure_4/"
+source("flow_functions.R")
+colvec4<- met.brewer("Cassatt1",n=6)[c(4,2,1,5,6)]
+```
+
+# Load SCE all specifics
+```{r load SCE}
+sce <- readRDS(file = paste0(path.input, "2025-07-15-all_export2.rds")) 
+```
+# Add marker_classes to rowdata
+```{r rowdata}
+rowData(sce) %>% data.frame()
+
+rowData(sce)[rowData(sce)$marker_name %in% c("HLA-DR", "CD38",  "Ki-67",  "CD45RA", "CCR7", "CD25"), "marker_class"] <- "type"
+rowData(sce)[rowData(sce)$marker_name %in% c("FSC-A", "FSC-H", "SSC-A", "SSC-B-A", "SSC-B-H", "SSC-H","LIVE_DEAD","CD3", "CD4", "CD8", "CD14161956" ,"Dex-1", "Dex-2", "Dex-3", "LIVE_DEAD", "Time"), "marker_class"] <- "none"
+
+```
+
+# Check if SCE object looks as expected
+```{r health check}
+set.seed(1234) #set seed to control stochastic component and make it reproducible
+sce <- runDR(sce, dr = "UMAP", features = "type") 
+
+
+plotDR(sce, "UMAP", color_by = type_markers(sce), ncol = round(sqrt(16*length(type_markers(sce))/9)), assay = "exprs")
+plotDR(sce, "UMAP", color_by = c("CD25", "CD127", "CD132", "CD122"), ncol = round(sqrt(16*length(type_markers(sce))/9)), assay = "exprs")
+plotDR(sce, "UMAP", color_by = c("CD25", "CD127", "CD132", "CD122"), ncol = round(sqrt(16*length(type_markers(sce))/9)), assay = "exprs",facet_by = "Specificity")
+
+plotDR(sce, "UMAP", color_by = c("CD25", "CD127", "CD132", "CD122"), ncol = round(sqrt(16*length(type_markers(sce))/9)), assay = "exprs",facet_by = "timepoint")
+
+pdf(paste0(path.Rout, "density_timepoints.pdf"), width = 8, height = 5)
+plot_density(sce, "UMAP", color_by = "timepoint",bins =10,xlim = c(-15,15))+ scale_colour_manual(values =colvec4 )
+dev.off()
+plot_density(sce, "UMAP", color_by = "Specificity",bins =25,xlim = c(-15,15))+ scale_colour_manual(values =colvec4 )
+```
+
+# Primary clustering
+Here, we perform the primary clustering and dimensionality reduction (UMAP).
+```{r clustering}
+type_markers(sce) #will be used for clustering
+state_markers(sce) # will not be used for clustering
+
+set.seed(12345)
+kinit <- 15 #number of clusters
+sce <- cluster(sce, features = type_markers(sce), xdim = 20, ydim = 20, maxK = kinit)
+
+
+pdf(paste0(path.Rout, "primary_clustering_export2.pdf"), width = 11, height = 8, onefile = TRUE)
+plotExprHeatmap(sce, features = "type",
+    by = "cluster_id", k = paste0("meta", kinit),
+    scale = "first", q = 0.01, perc = TRUE, col_dend = FALSE, bars = TRUE, col_clust = FALSE)
+
+plotDR(sce, "UMAP", color_by = paste0("meta", kinit))
+plotDR(sce, "UMAP", color_by = type_markers(sce), ncol = round(sqrt(16*length(type_markers(sce))/9)), assay = "exprs")
+plotDR(sce, "UMAP", color_by = state_markers(sce), ncol = round(sqrt(16*length(type_markers(sce))/9)), assay = "exprs")
+plotDR(sce, "UMAP", color_by = state_markers(sce), ncol = round(sqrt(16*length(type_markers(sce))/9)), assay = "exprs", facet_by = "timepoint")
+plotExprHeatmap(sce, features = "type",
+    by = "cluster_id", k = paste0("meta", kinit),
+    scale = "first", q = 0.01, perc = TRUE, col_dend = FALSE, bars = TRUE, col_clust = FALSE)
+plotDR(sce, "UMAP", color_by = paste0("meta", kinit))
+plotDR(sce, "UMAP", color_by = paste0("meta", kinit), facet_by = "timepoint")
+plotDR(sce, "UMAP", color_by = paste0("meta", kinit), facet_by = "BiobankCode")
+plotExprHeatmap(sce, features = "state",
+    by = "cluster_id", k = paste0("meta", kinit),
+    scale = "first", q = 0.01, perc = TRUE, col_dend = FALSE, bars = TRUE, col_clust = FALSE)
+plotExprHeatmap(sce, features = c("CD38","Ki-67","HLA-DR","T-bet","GzmB","CCR7","CD45RA","CD25", "CD127", "CD132", "CD122"  ),
+    by = "cluster_id", k = paste0("meta", kinit),
+    scale = "first", q = 0.01, perc = TRUE, col_dend = FALSE, bars = TRUE, col_clust = FALSE)
+dev.off()
+
+
+#Save SCE object
+#saveRDS(sce, file = paste0(path.Rout, "export_2allspec_clustered.rds")) 
+#save for reproducibility, since flowCore::filter() has stochastic component.
+```
+
+# Merge primary clustering
+```{r merging}
+sce<-readRDS(file = paste0(path.input, "export_2allspec_clustered.rds"))
+
+
+(merging_table1 <- data.frame("original_cluster" = paste(1:15), "new_cluster" = c("activated_prolif_EM", "activated_EM","activated_EM", "HLADR_EM", "activated_TEMRA", "resting_TEMRA", "naive", "activated_prolif_EM","activated_prolif_EM", "resting_EM", "activated_prolif_EM", "prolif_EM", "resting_EM", "CD38_EM", "naive" )))
+
+sce <- mergeClusters(sce, k = "meta15", table = merging_table1, id = "merging1") #merge clusters by merging table
+
+#add clusters to colData
+code <- cluster_codes(sce)[,c("som400", "meta15", "merging1")]
+coldata <- as.data.frame(colData(sce))
+coldata <- merge(coldata, code, by.x = "cluster_id", by.y = "som400")
+colData(sce) <- DataFrame(coldata[order(coldata$cell_id),])
+
+#Table of percentages per timepoint for each cluster (i.e., colSums = 100)
+t(t(table(colData(sce)[,c("merging1", "timepoint")]))/colSums(table(colData(sce)[,c("merging1", "timepoint")])))*100
+AbundanceCluster<-calculate_DA(sce, cluster_column = "merging1", subject_id = "BiobankCode", condition = "timepoint")
+
+
+colvecVacc<- met.brewer("Cassatt1",n=6)[c(4,2,1,5,6)] 
+colvec4<- met.brewer("Kandinsky",n=10)[c(9,4,1,6)] 
+
+pdf(paste0(path.Rout, "merged_clustering.pdf"), width = 11, height = 8, onefile = TRUE)
+plotDR(sce, "UMAP", color_by = "merging1") + scale_color_brewer(palette = "Set1")
+plotDR(sce, "UMAP", color_by = "timepoint", facet_by = "timepoint")+ scale_color_brewer(palette = "Dark2")
+plot_density(sce, "UMAP", color_by = "timepoint",bins = 20)+ scale_color_brewer(palette = "Dark2")
+plot_density(sce, "UMAP", color_by = "Specificity",bins = 20)+ scale_color_brewer(palette = "Dark2")
+plotDR(sce, "UMAP", color_by = "merging1", facet_by = "sample_id")+ scale_color_brewer(palette = "Set1")
+plotDR(sce, "UMAP", color_by = type_markers(sce), ncol = round(sqrt(16*length(type_markers(sce))/9)), assay = "exprs")
+plotDR(sce, "UMAP", color_by = c(type_markers(sce),"T-bet","CD127","CD122","CD132"), ncol =5, assay = "exprs")
+plotClusterExprs(sce, k = "merging1", features = "type")
+plotClusterExprs(sce, k = "merging1", features = "state")
+plotExprHeatmap(sce, k="merging1", by="cluster_id", features = c("CD45RA", "CCR7","CD127", "CD122", "CD132", "CD25", "GzmB", "CD38", "Ki-67",  "T-bet", "HLA-DR") )
+
+dev.off()
+
+pdf(paste0(path.Rout, "allspec_UMAP.pdf"), width = 11, height = 8, onefile = TRUE)
+plotDR(sce, "UMAP", color_by = "merging1") + scale_color_brewer(palette = "Set1")+theme_classic()
+dev.off()
+
+
+pdf(paste0(path.Rout, "allspec_heatmap.pdf"), width = 11, height = 8, onefile = TRUE)
+plotExprHeatmap(sce, k="merging1", by="cluster_id", features = c("CD45RA", "CCR7","CD127", "CD122", "CD132", "CD25", "GzmB", "CD38", "Ki-67", "T-bet", "HLA-DR"), )
+dev.off()
+
+
+pdf(paste0(path.Rout, "allspec_heatmapcY.pdf"), width = 11, height = 8, onefile = TRUE)
+plotExprHeatmap(sce, k="merging1", by="cluster_id", features = c("CD127", "CD122", "CD132", "CD25") )
+dev.off()
+
+pdf(paste0(path.Rout, "allspec_featureplot.pdf"), width = 16, height = 8)
+plotDR(sce, "UMAP", color_by = c("CD25","CD127","CD122","CD132", "CD45RA","CCR7","CD38","Ki-67","GzmB", "HLA-DR", "T-bet"), ncol =4, assay = "exprs")
+plotDR(sce, "UMAP", color_by = c("CD25","CD127","CD122","CD132", "CD45RA","CCR7","CD38","Ki-67","GzmB","HLA-DR", "T-bet"), ncol =4, assay = "exprs")+theme(axis.line = element_blank(), axis.ticks = element_blank(), axis.title = element_blank(),axis.text = element_blank(), panel.background = element_blank(), panel.border = element_blank(), panel.grid.major = element_blank(),
+                                                                                                                                               panel.grid.minor = element_blank(), strip.text = element_blank())
+dev.off()
+
+#saveRDS(sce, file = paste0(path.Rout, "allspec-Annotated.rds"))
+
+
+sourcedat<-plotExprHeatmap(sce, k="merging1", by="cluster_id", features = c("CD45RA", "CCR7","CD127", "CD122", "CD132", "CD25", "GzmB", "CD38", "Ki-67", "T-bet", "HLA-DR"), )
+
+
+sourcedatmain<-plotExprHeatmap(sce, k="merging1", by="cluster_id", features = c("CD127", "CD122", "CD132", "CD25" ))
+
+Fig4f<-sourcedatmain@matrix %>% as.data.frame()
+S6eSource<-sourcedat@matrix %>% as.data.frame()
+#xlsx::write.xlsx(S6eSource, file = paste0(path.Rout, "S6e_sourcedat.xlsx"))
+#xlsx::write.xlsx(Fig4f, file = paste0(path.Rout, "4f_sourcedat.xlsx"))
+```
+
+
+```{r merging}
+sce<-readRDS(file = paste0(path.input, "allspec-Annotated.rds"))
+
+ pdf(paste0(path.Rout, "allspec_densitymap1.pdf"), width = 20, height = 8, onefile = TRUE)
+plot_density(sce, "UMAP", color_by = "Specificity",bins =15, xlim = c(-10,12), ylim = c(-10,7))+ scale_colour_manual(values =colvec4 )
+dev.off()
+
+```

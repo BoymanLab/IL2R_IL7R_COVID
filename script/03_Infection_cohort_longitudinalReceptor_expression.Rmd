@@ -1,0 +1,1364 @@
+---
+title: "IL2Ra-longitudinal"
+author: "lcegla"
+date: "2023-09-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libs}
+library(readxl) 
+library(tidyverse) 
+library(cowplot) 
+library(MetBrewer) 
+library(ggpubr) 
+library(rstatix) 
+library(xlsx)
+library(scales)
+library(plyr)
+library(writexl)
+library(dplyr)
+```
+
+```{r set paths}
+rm(list = ls())
+
+
+path.input <- "../input/Figure_3/"
+path.out <- "../output/Figure_3/"
+
+
+colvec14 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15)] #select three colors because we will have 
+colvec16 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15,4,2)]
+colvec18 <- met.brewer("VanGogh2",n=20)[c(1,19,3,6,18,10,14, 5,17,3,20,2,16,15,4,2,7,18)] 
+colvec22 <- met.brewer("VanGogh2",n=25)[c(1,19,25,3,6,18,10,14, 24,5,17,24,3,20,2,16,15,4,23,2,7,18)] 
+colvec36 <- met.brewer("VanGogh2",n=40)[c(1,19,25,3,6,18,10,14, 24,5,17,24,3,20,2,16,15,4,23,2,7,18,25,40,26,39,27,38,26,37,28,36,29,35,30,31)] 
+Sevcolours<-c("#646464","#E8A8B7", "#D15270", "#A3CCE4", "#337FAA","#A4DDDD", "#72A096")
+
+```
+
+
+```{r import data}
+data.raw.Norm <- read_excel(paste0(path.input, "220527_all_samples_gating_results_06normalized_circle_gates.xlsx"))
+SampleKey<-read_excel(paste0(path.input,"220303_fcs_key_file_normalized06.xls"))
+Clinicall<-read_excel(paste0(path.input, "ClinicAll_230516.xlsx"))
+
+Raw.merged<-merge(data.raw.Norm, SampleKey, by.x = "file_name", by.y = "file_name")
+Raw.merged.filter<-Raw.merged %>% 
+   select(file_name, Index, everything()) 
+
+Raw.merged.filter$Index<-as.double(Raw.merged.filter$Index)
+
+ClinicallHealthy<-merge(Raw.merged.filter, Clinicall, by.x = "Index", by.y = "Index")
+
+
+#writexl::write_xlsx(ClinicallMerge, path = paste0(path.out, "Figure_3_data.xlsx"))
+```
+
+```{r testing paired receptor expression longitudinally grouped by Severity}
+#load df containing only samples where all timepoints were measured to allow for paired analysis
+
+pairedDF<- read_excel(paste0(path.input, "Figure_3_paired_df.xlsx"))
+
+    CD25_Tcon_Sev <- pairedDF %>%
+      dplyr::group_by(SevMax2) %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `Tcons_CD25_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+
+CD25_Tcon_Sev<-CD25_Tcon_Sev
+CD25_Tcon_Sev$p.adj<-format(CD25_Tcon_Sev$p.adj, scientific=T)
+CD25_Tcon_Sev
+```
+
+```{r testing also vs healthy CD25 Tcon}
+#test healthy vs different timepoints
+CD25_TconvsHealthy <- ClinicallHealthy %>%
+  rstatix::t_test(formula = `Tcons_CD25_Geometric Mean` ~ Sampling_timepoint, comparisons = list(c("Healthy", "ONE"), c("Healthy", "SIX"), c("Healthy", "TWELVE")), paired = F) %>%
+  add_xy_position()
+CD25_TconvsHealthy
+CD25_TconvsHealthy<-CD25_TconvsHealthy
+CD25_TconvsHealthy$p.adj<-format(CD25_TconvsHealthy$p.adj, scientific=T)
+```
+
+```{r extracting frequencies}
+Freqexport<-pairedDF %>% dplyr::select(Index, PatID, SampleID, Sampling_timepoint, `CD4_CM__Freq. of CD4`, `CD4_EM__Freq. of CD4`, `CD4_naive__Freq. of CD4`, `CD8_EM__Freq. of CD8`, `CD8_CM__Freq. of CD8`, `CD8_naive__Freq. of CD8`, `CD8_TEMRA__Freq. of CD8`)
+
+#writexl::write_xlsx(Freqexport, path = paste0(path.out, "2024-11-18-Freq_Export.xlsx"))
+
+```
+
+```{r Testing longitudinally on CD8 CD25}
+#test CD25 on CD8
+CD25_CD8_all <- pairedDF %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `CD8_CD25_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD25_CD8_all
+CD25_CD8_all<-CD25_CD8_all
+CD25_CD8_all$p.adj<-format(CD25_CD8_all$p.adj, scientific=T)
+
+
+#test healthy vs different timepoints
+CD25_CD8vsHealthy <- ClinicallHealthy %>%
+  rstatix::t_test(formula = `CD8_CD25_Geometric Mean` ~ Sampling_timepoint, comparisons = list(c("Healthy", "ONE"), c("Healthy", "SIX"), c("Healthy", "TWELVE")), paired = F) %>%
+  add_xy_position()
+CD25_CD8vsHealthy
+CD25_CD8vsHealthy<-CD25_CD8vsHealthy
+CD25_CD8vsHealthy$p.adj<-format(CD25_CD8vsHealthy$p.adj, scientific=T)
+```
+
+```{r Testing longitudinally CD122}
+#test CD122 on CD8
+CD122_CD8_all <- pairedDF %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `CD8_CD122_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD122_CD8_all
+CD122_CD8_all<-CD122_CD8_all
+CD122_CD8_all$p.adj<-format(CD122_CD8_all$p.adj, scientific=T)
+
+
+#test healthy vs different timepoints
+CD122_CD8vsHealthy <- ClinicallHealthy %>%
+  rstatix::t_test(formula = `CD8_CD122_Geometric Mean` ~ Sampling_timepoint, comparisons = list(c("Healthy", "ONE"), c("Healthy", "SIX"), c("Healthy", "TWELVE")), paired = F) %>%
+  add_xy_position()
+CD122_CD8vsHealthy
+CD122_CD8vsHealthy<-CD122_CD8vsHealthy
+CD122_CD8vsHealthy$p.adj<-format(CD122_CD8vsHealthy$p.adj, scientific=T)
+
+
+
+
+#test CD122 on Tcons
+CD122_Tcon_all <- pairedDF %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `Tcons_CD122_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD122_Tcon_all
+CD122_Tcon_all<-CD122_Tcon_all
+CD122_Tcon_all$p.adj<-format(CD122_Tcon_all$p.adj, scientific=T)
+
+
+#test healthy vs different timepoints
+CD122_TconvsHealthy <- ClinicallHealthy %>%
+  rstatix::t_test(formula = `Tcons_CD122_Geometric Mean` ~ Sampling_timepoint, comparisons = list(c("Healthy", "ONE"), c("Healthy", "SIX"), c("Healthy", "TWELVE")), paired = F) %>%
+  add_xy_position()
+CD122_TconvsHealthy
+CD122_TconvsHealthy<-CD122_TconvsHealthy
+CD122_TconvsHealthy$p.adj<-format(CD122_TconvsHealthy$p.adj, scientific=T)
+```
+
+
+```{r Testing longitudinally CD127}
+#test CD127 on CD8
+CD127_CD8_all <- pairedDF %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `CD8_CD127_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD127_CD8_all
+CD127_CD8_all<-CD127_CD8_all
+CD127_CD8_all$p.adj<-format(CD127_CD8_all$p.adj, scientific=T)
+
+
+#test healthy vs different timepoints
+CD127_CD8vsHealthy <- ClinicallHealthy %>%
+  rstatix::t_test(formula = `CD8_CD127_Geometric Mean` ~ Sampling_timepoint, comparisons = list(c("Healthy", "ONE"), c("Healthy", "SIX"), c("Healthy", "TWELVE")), paired = F) %>%
+  add_xy_position()
+CD127_CD8vsHealthy
+CD127_CD8vsHealthy<-CD127_CD8vsHealthy
+CD127_CD8vsHealthy$p.adj<-format(CD127_CD8vsHealthy$p.adj, scientific=T)
+
+
+
+
+#test CD127 on Tcons
+CD127_Tcon_all <- pairedDF %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `Tcons_CD127_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD127_Tcon_all
+CD127_Tcon_all<-CD127_Tcon_all
+CD127_Tcon_all$p.adj<-format(CD127_Tcon_all$p.adj, scientific=T)
+
+
+#test healthy vs different timepoints
+CD127_TconvsHealthy <- ClinicallHealthy %>%
+  rstatix::t_test(formula = `Tcons_CD127_Geometric Mean` ~ Sampling_timepoint, comparisons = list(c("Healthy", "ONE"), c("Healthy", "SIX"), c("Healthy", "TWELVE")), paired = F) %>%
+  add_xy_position()
+CD127_TconvsHealthy
+CD127_TconvsHealthy<-CD127_TconvsHealthy
+CD127_TconvsHealthy$p.adj<-format(CD127_TconvsHealthy$p.adj, scientific=T)
+```
+
+
+```{r calculating average healthy levels}
+pairedDF<- read_excel(paste0(path.input, "Figure_3_paired_df.xlsx"))
+
+pairedDF<-pairedDF %>%
+  dplyr::filter(!is.na(Index))
+
+
+healthyLevels<-ClinicallHealthy %>% 
+  dplyr::filter(Sample_type=="Healthy") %>% 
+  select(`CD8_CD25_Geometric Mean`, `Tcons_CD25_Geometric Mean`,`CD8_CD122_Geometric Mean`, `Tcons_CD122_Geometric Mean`,
+         `CD8_CD127_Geometric Mean`, `Tcons_CD127_Geometric Mean`, Sample_type) %>% 
+  pivot_longer(cols = -Sample_type ,names_to = "marker", values_to = "measurement") %>% 
+  group_by(marker) %>% 
+  dplyr::summarise(avrg=mean(measurement), sd=sd(measurement), SEM= sd(measurement) / sqrt(n()))
+
+#export mean healthy levels
+
+#writexl::write_xlsx(healthyLevels, path = paste0(path.out, "Fig3_Healthy_mean.xlsx"))
+
+```
+
+
+
+```{r summary stats for kinetics of receptors}
+summary<-pairedDF %>% 
+  group_by(Sampling_timepoint) %>% 
+  dplyr::summarise(mean_CD25_CD8=mean(`CD8_CD25_Geometric Mean`), sd_CD25_CD8=sd(`CD8_CD25_Geometric Mean`), mean_CD25_Tcon=mean(`Tcons_CD25_Geometric Mean`), sd_CD25_Tcon=sd(`Tcons_CD25_Geometric Mean`), mean_CD127_CD8=mean(`CD8_CD127_Geometric Mean`), sd_CD127_CD8=mean(`CD8_CD127_Geometric Mean`), mean_CD127_Tcons=mean(`Tcons_CD127_Geometric Mean`), sd_CD127_Tcons=sd(`Tcons_CD127_Geometric Mean`), mean_CD122_CD8=mean(`CD8_CD122_Geometric Mean`), sd_CD122_CD8=sd(`CD8_CD122_Geometric Mean`), mean_CD122_Tcons=mean(`Tcons_CD122_Geometric Mean`), sd_CD122_Tcons=sd(`Tcons_CD122_Geometric Mean`), n=n())
+
+
+summary<-pairedDF %>% 
+  group_by(Sampling_timepoint) %>% 
+  dplyr::summarise(mean_CD25_CD8=median(`CD8_CD25_Geometric Mean`), sd_CD25_CD8=sd(`CD8_CD25_Geometric Mean`), mean_CD25_Tcon=median(`Tcons_CD25_Geometric Mean`), sd_CD25_Tcon=sd(`Tcons_CD25_Geometric Mean`), mean_CD127_CD8=median(`CD8_CD127_Geometric Mean`), sd_CD127_CD8=sd(`CD8_CD127_Geometric Mean`), mean_CD127_Tcons=median(`Tcons_CD127_Geometric Mean`), sd_CD127_Tcons=sd(`Tcons_CD127_Geometric Mean`), mean_CD122_CD8=median(`CD8_CD122_Geometric Mean`), sd_CD122_CD8=sd(`CD8_CD122_Geometric Mean`), mean_CD122_Tcons=median(`Tcons_CD122_Geometric Mean`), sd_CD122_Tcons=sd(`Tcons_CD122_Geometric Mean`), n=n())
+#writexl::write_xlsx(summary, path = paste0(path.out, "2024-07-10-Receptor_mediamSD_byTimepoint.xlsx"))
+```
+
+
+
+```{r plotting}
+
+df<-pairedDF %>% 
+  dplyr::filter(SevMax2!="Healthy")
+
+pdf(paste0(path.out, "Fig_1_Tcon_CD122_SevMild_longitudinal_12.pdf"), height = 5.5, width = 12)
+ggplot(df, aes(x=Sampling_timepoint, y=`Tcons_CD122_Geometric Mean`))+
+  geom_violin(aes(fill=SevMax2),draw_quantiles = 0.5, alpha=0.4, size=1)+
+  geom_line(aes(group=PatID))+
+  geom_jitter(aes(colour=SevMax2), size=3, width = .02)+
+  theme_cowplot()+
+   theme(strip.background = element_blank(),
+  strip.text.x = element_blank())+
+  facet_wrap("SevMax2")+
+  geom_hline(yintercept = 0.3792)+
+  scale_fill_manual(values = Sevcolours)+
+  scale_colour_manual(values = Sevcolours)
+dev.off()
+
+pdf(paste0(path.out, "Fig_1_Tcon_CD25_SevMild_longitudinal.pdf"), height = 5.5, width = 12)
+ggplot(df, aes(x=Sampling_timepoint, y=`Tcons_CD25_Geometric Mean`))+
+  geom_violin(aes(fill=SevMax2),draw_quantiles = 0.5, alpha=0.4, size=1)+
+  geom_line(aes(group=PatID))+
+  geom_jitter(aes(colour=SevMax2), size=3, width = .05)+
+  theme_cowplot()+
+   theme(strip.background = element_blank(),
+  strip.text.x = element_blank())+
+  facet_wrap("SevMax2")+
+  geom_hline(yintercept = 1.1648)+
+  scale_fill_manual(values = Sevcolours)+
+  scale_colour_manual(values = Sevcolours)
+dev.off()
+
+pdf(paste0(path.out, "Fig_1_Tcon_CD127_SevMild_longitudinal.pdf"), height = 5.5, width = 12)
+ggplot(df, aes(x=Sampling_timepoint, y=`Tcons_CD127_Geometric Mean`))+
+  geom_line(aes(group=PatID))+
+  geom_violin(aes(fill=SevMax2),draw_quantiles = 0.5, alpha=0.4, size=1)+
+  geom_jitter(aes(colour=SevMax2), size=3, width = .05)+
+  theme_cowplot()+
+   theme(strip.background = element_blank(),
+  strip.text.x = element_blank())+
+  facet_wrap("SevMax2")+
+  geom_hline(yintercept = 1.4628)+
+  scale_fill_manual(values = Sevcolours)+
+  scale_colour_manual(values = Sevcolours)
+dev.off()
+
+
+pdf(paste0(path.out, "Fig_1_CD127_SevMild_longitudinal.pdf"),height = 5.5, width = 12)
+ggplot(df, aes(x=Sampling_timepoint, y=`CD8_CD127_Geometric Mean`))+
+  geom_violin(aes(fill=SevMax2),draw_quantiles = 0.5, alpha=0.4, size=1)+
+  geom_line(aes(group=PatID))+
+  geom_jitter(aes(colour=SevMax2), size=3, width = .05)+
+  theme_cowplot()+
+   theme(strip.background = element_blank(),
+  strip.text.x = element_blank())+
+  facet_wrap("SevMax2")+
+  geom_hline(yintercept = 0.8892)+
+  scale_fill_manual(values = Sevcolours)+
+  scale_colour_manual(values = Sevcolours)
+dev.off()
+
+
+pdf(paste0(path.out, "Fig_1_CD8_CD25_SevMild_longitudinal.pdf"), height = 5.5, width = 12)
+ggplot(df, aes(x=Sampling_timepoint, y=`CD8_CD25_Geometric Mean`))+
+  geom_violin(aes(fill=SevMax2),draw_quantiles = 0.5, alpha=0.4, size=1)+
+  geom_line(aes(group=PatID))+
+  geom_jitter(aes(colour=SevMax2), size=3, width = .05)+
+  theme_cowplot()+
+   theme(strip.background = element_blank(),
+  strip.text.x = element_blank())+
+  facet_wrap("SevMax2")+
+  geom_hline(yintercept = 0.9380)+
+  scale_fill_manual(values = Sevcolours)+
+  scale_colour_manual(values = Sevcolours)
+dev.off()
+
+pdf(paste0(path.out, "Fig_1_CD8_CD122_SevMild_longitudinal.pdf"), height = 5.5, width = 12)
+ggplot(df, aes(x=Sampling_timepoint, y=`CD8_CD122_Geometric Mean`))+
+  geom_violin(aes(fill=SevMax2),draw_quantiles = 0.5, alpha=0.4, size=1)+
+  geom_line(aes(group=PatID))+
+  geom_jitter(aes(colour=SevMax2), size=3, width = .05)+
+  theme_cowplot()+
+   theme(strip.background = element_blank(),
+  strip.text.x = element_blank())+
+  facet_wrap("SevMax2")+
+  geom_hline(yintercept = 0.4072)+
+  scale_fill_manual(values = Sevcolours)+
+  scale_colour_manual(values = Sevcolours)
+dev.off()
+
+```
+
+```{r stats}
+
+TconCD25<-pairedDF %>%
+      dplyr::group_by(SevMax2) %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `Tcons_CD25_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" )
+
+TconCD122<-pairedDF %>%
+      dplyr::group_by(SevMax2) %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `Tcons_CD122_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" )
+
+
+TconCD127<-pairedDF %>%
+      dplyr::group_by(SevMax2) %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `Tcons_CD127_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" )
+
+
+
+CD8CD122<-pairedDF %>%
+      dplyr::group_by(SevMax2) %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `CD8_CD122_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" )
+
+
+CD8CD25<-pairedDF %>%
+      dplyr::group_by(SevMax2) %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `CD8_CD25_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" )
+
+
+CD8CD127<-pairedDF %>%
+      dplyr::group_by(SevMax2) %>%
+      dplyr::filter(SevMax2!="Healthy") %>%
+      dplyr::filter(!PatID %in% c("PFCL1-121520-1965","PFCL1-188726-1985", "PFCL1-LIM-133723",  "PFCL1-LIM-224504",  "PFCL1-UST-603160",  "PFCL1-UST-664926",  "PFCL1-TRI-638119","PFCL1-TRI-424713",  "PFCL1-TRI-325994",  "PFCL1-TRI-576375",  "PFCL1-TRI-778908")) %>% 
+  rstatix::wilcox_test(formula = `CD8_CD127_Geometric Mean` ~ PlotID, comparisons = list(c("ONE", "SIX"), c("ONE", "TWELVE"), c("SIX", "TWELVE")), paired = T) %>%
+  adjust_pvalue(method = "fdr" )
+
+#compile all stats
+stats<-rbind(TconCD25,TconCD122,TconCD127,CD8CD25,CD8CD122,CD8CD127)
+
+stats1<-stats %>% dplyr::select(group1,group2,n1, n2, statistic, p,p.adj,.y.,SevMax2) %>% as.data.frame()
+#write stats
+#writexl::write_xlsx(stats1, path = paste0(path.out, "03_mildSevere_stats.xlsx"))
+```
+
+
+```{r CD25 at 6M}
+ClinicallMerge<- read_excel(paste0(path.input, "Figure_3_data.xlsx"))
+
+plotall<-ClinicallMerge %>% 
+  dplyr::filter(Sampling_timepoint %in% c("ONE", "SIX", "TWELVE"))
+
+ggplot(plotall, mapping = aes(x=`Tcells_CD25_Geometric Mean`, y=CD3c))+
+  #ggforce::geom_mark_hull(aes(fill = SevMax2),concavity = 10)+
+  geom_density_2d(aes(colour=SevMax2))+
+  geom_point(aes(fill=SevMax2),shape = 21,  size =2 )+
+  theme(panel.spacing = unit(0, "lines"), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.x = element_blank())+
+  scale_fill_manual(values=colvec14, drop=F)+
+  scale_color_manual(values=c("red", "blue", "gray21", "gray21"), drop=F)+
+  scale_x_continuous()+
+  stat_cor()+
+    geom_smooth(method='lm', formula= y~x, colour="black")+
+theme_classic()
+```
+
+
+
+```{r CD25 at 6M}
+ggplot(plotall, mapping = aes(x=`Tcells_CD25_Geometric Mean`, y=CD3c))+
+  geom_point(aes(fill=Sampling_timepoint),shape = 21,  size =2 )+
+  theme(panel.spacing = unit(0, "lines"), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text.x = element_blank())+
+  scale_fill_manual(values=colvec14, drop=F)+
+  scale_color_manual(values=c("gray21", "gray21", "gray21", "gray21"), drop=F)+
+  scale_x_continuous()+
+  stat_cor()+
+    geom_smooth(method='lm', formula= y~x, colour="black")+
+  geom_smooth(data=subset(plotall, Sampling_timepoint=="ONE"), method='lm',formula=y~x,se=F, colour="red")+
+  geom_smooth(data=subset(plotall, Sampling_timepoint=="SIX"), method='lm',formula=y~x,se=F, colour="green")+
+  geom_smooth(data=subset(plotall, Sampling_timepoint=="TWELVE"), method='lm',formula=y~x,se=F)+
+theme_classic()
+
+```
+
+```{r T cellcounts}
+
+testcounts<-ClinicallMerge %>%
+  dplyr::filter(Sampling_timepoint %in% c("ONE", "SIX", "TWELVE")) %>% 
+  group_by(Sampling_timepoint) %>% 
+  rstatix::t_test(formula = CD3c ~ SevMax2, comparisons = list(c("Mild", "Severe"))) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+testcounts$p.adj<-format(testcounts$p.adj, scientific=T)
+
+toplot<-ClinicallMerge %>% dplyr::filter(Sampling_timepoint %in% c("ONE", "SIX", "TWELVE"))
+
+pdf(paste0(path.out, "Tcellcounts_Severity.pdf"), height = 7, width = 10)
+ggplot(toplot, aes(x=SevMax2, y=CD3c))+
+  geom_violin(aes(fill=SevMax2),draw_quantiles = 0.5, alpha=0.4, size=1)+
+  geom_jitter(aes(colour=SevMax2), size=5, width = .05)+
+  geom_line(aes(group=PatID))+
+  scale_fill_manual(values = colvec18)+
+   scale_colour_manual(values = colvec18)+
+  facet_wrap("Sampling_timepoint", nrow = 1)+
+  stat_pvalue_manual(testcounts)+
+  theme_cowplot()
+dev.off()
+```
+
+```{r comparing each group to healthy}
+#healthy vs acute
+
+foldchanges<- read_excel(paste0(path.input, "Figure_3_data.xlsx"))
+
+foldchanges<-foldchanges %>% dplyr::select(SampleID,CodeBioBank.y, COVID, SevMax2, Sampling_timepoint,`Tcons_CD122_Geometric Mean`, `Tcons_CD25_Geometric Mean`, `Tcons_CD127_Geometric Mean`, `CD8_CD122_Geometric Mean`, `CD8_CD25_Geometric Mean`, `CD8_CD127_Geometric Mean`) %>% 
+  mutate(PlotID=paste(SevMax2, Sampling_timepoint, sep = "_"))
+
+foldchanges<-foldchanges %>% 
+  dplyr::filter(Sampling_timepoint!="Vaccinated") %>% 
+  pivot_longer(cols = -c("Sampling_timepoint" ,"CodeBioBank.y", "COVID", "SevMax2", "PlotID", "SampleID"),names_to = "marker", values_to = "measurement")
+
+
+foldavrg<-foldchanges %>% 
+  group_by(PlotID, marker) %>% 
+  dplyr::summarise(avrg=mean(measurement), sd=sd(measurement), SEM= sd(measurement) / sqrt(n())) %>% 
+  add_column(FoldChange=NA) %>% 
+  as.data.frame()
+
+ for(marker in unique(foldavrg$marker)){
+   for (timepoint in unique(foldavrg$PlotID)) {
+                         foldavrg[foldavrg$marker == marker& foldavrg$PlotID==timepoint, "FoldChange"] <- foldavrg[foldavrg$marker == marker & foldavrg$PlotID==timepoint, "avrg"] / foldavrg[foldavrg$marker == marker & foldavrg$PlotID== "Healthy_Healthy" , "avrg"]
+ 
+       }
+ }
+
+foldplot<-foldavrg %>% 
+  dplyr::filter(PlotID!="Healthy_Healthy") %>% 
+  dplyr::mutate(lFC=log2(FoldChange))
+
+#computing stats
+alltests <- foldchanges %>%
+      dplyr::group_by(marker) %>%
+  rstatix::wilcox_test(formula = measurement ~ PlotID, comparisons = list(c("Healthy_Healthy", "Severe_ONE"), c("Healthy_Healthy", "Severe_SIX"), c("Healthy_Healthy", "Severe_TWELVE"), c("Healthy_Healthy", "Mild_ONE"),c("Healthy_Healthy", "Mild_SIX"),c("Healthy_Healthy", "Mild_TWELVE"))) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+alltests
+
+alltests$p.adj<-format(alltests$p.adj, scientific=T)
+
+df.plot<-merge(foldplot, alltests)
+
+#writexl::write_xlsx(df.all, path = paste0(path.out, "03_FC_overhealthy.xlsx"))
+
+df.plot$p.adj<-as.numeric(df.plot$p.adj)
+
+df.plot<-df.plot %>%  dplyr::filter(str_detect(group2, PlotID)) %>% 
+  mutate(grouping = paste(group2,marker ,sep = "_")) %>% 
+  mutate(pval_category = case_when(
+      p.adj > 0.05 ~ "> 0.05",
+      p.adj > 0.001 ~ "0.001 - 0.05",
+      p.adj > 0.0001 ~ "0.0001 - 0.001",
+      TRUE ~ "< 0.0001"
+    )) %>% 
+  arrange(desc(lFC)) %>% 
+  mutate(grouping = factor(grouping, levels = grouping))
+
+size_mapping <- c("> 0.05" = 1, "0.001 - 0.05" = 2, "0.0001 - 0.001" = 2.5, "< 0.0001" = 4)
+color_mapping <- c("> 0.05" = "gray", "0.001 - 0.05" = "lightpink", 
+                   "0.0001 - 0.001" = "violet", "< 0.0001" = "magenta")
+
+
+pdf(paste0(path.out, "Mild_severe_vs_Healthy_alltimepoints.pdf"), height = 7.5, width = 10)
+ggplot(df.plot, aes(x=grouping, y=lFC,size = pval_category,color = pval_category))+
+  geom_point()+
+  scale_size_manual(values = size_mapping)+
+  scale_color_manual(values = color_mapping)+
+  theme_classic()+
+  geom_hline(yintercept = 0,linetype='dotted')+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+dev.off()
+
+df.plot1<-df.plot %>% 
+  separate(PlotID, into = c("Sev", "time"), sep = "_",remove = F) %>% 
+  mutate(time = factor(time, levels = c("ONE", "SIX", "TWELVE"))) %>%
+  arrange(time) %>% 
+   mutate(grouping = factor(grouping, levels = grouping)) 
+
+pdf(paste0(path.out, "Mild_severe_vs_Healthy_groupedbytime.pdf"), height = 7, width = 15)
+ggplot(df.plot1, aes(x=grouping, y=lFC,size = pval_category,color = pval_category))+
+  geom_point()+
+  scale_size_manual(values = size_mapping)+
+  scale_color_manual(values = color_mapping)+
+  theme_classic()+
+  geom_hline(yintercept = 0,linetype='dotted')+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+dev.off()
+
+df.plot2<-df.plot1 %>% 
+  separate(marker, into = c("celltype", "marker1"), sep = "_",remove = F) %>% 
+  mutate(marker1 = factor(marker1, levels = c("CD25", "CD122", "CD127"))) %>%
+  arrange(time, marker1) %>% 
+   mutate(grouping = factor(grouping, levels = grouping))
+
+pdf(paste0(path.out, "Mild_severe_vs_Healthy_groupedbytime_receptor.pdf"), height = 7, width = 15)
+ggplot(df.plot2, aes(x=grouping, y=lFC,size = pval_category,color = pval_category))+
+  geom_point()+
+  scale_size_manual(values = size_mapping)+
+  scale_color_manual(values = color_mapping)+
+  theme_classic()+
+  geom_hline(yintercept = 0,linetype='dotted')+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+dev.off()
+```
+
+```{r correlation yC with serum cytokines}
+
+corr_data<-read.csv(file.path(path.input, "Figure3D.csv"))
+
+columns_FACS_simple<-c("Tcons_CD25_Geometric.Mean", "CD8_CD25_Geometric.Mean",
+                       "Tcons_CD122_Geometric.Mean", "CD8_CD122_Geometric.Mean",
+                       "Tcons_CD127_Geometric.Mean", "CD8_CD127_Geometric.Mean") 
+
+CD25<-columns_FACS_simple[which(grepl("CD25", columns_FACS_simple))]
+CD122<-columns_FACS_simple[which(grepl("CD122", columns_FACS_simple))]
+CD127<-columns_FACS_simple[which(grepl("CD127", columns_FACS_simple))]
+cytokines<-c("TNFa_USZ", "IFNg_USZ", "IL1B_USZ", "IL6_USZ",   "IL10_USZ", "CRP")
+Tcell_activation<-c("CD8_HLADR_Geometric.Mean", "Tcons_HLADR_Geometric.Mean")
+
+xdata_parameters<-c(cytokines, Tcell_activation)
+
+testmatrix1<-corr_data%>%dplyr::select(all_of(c(CD25, CD122, CD127)))%>%ungroup()
+colnames(testmatrix1)<-gsub("_Geometric Mean"," MFI" , gsub("__Freq. of", " %",colnames(testmatrix1)))
+testmatrix1<-as.data.frame(testmatrix1)
+
+testmatrix2<-corr_data%>%dplyr::select(all_of(c(xdata_parameters)))%>%ungroup()
+testmatrix2<-as.data.frame(testmatrix2)
+
+
+corr_M<-cor(testmatrix1, testmatrix2, method="spearman")
+
+Cortest_M <-data.frame(row.names=colnames(testmatrix1))
+
+for(j in 1:ncol(testmatrix1)) {
+  for(i in 1:ncol(testmatrix2)){
+    a<- cor.test(testmatrix1[,j], testmatrix2[,i], method="spearman")
+    Cortest_M[j,i]<-a$p.value
+    colnames(Cortest_M)[i]<-colnames(testmatrix2)[i]
+  }
+}
+
+p.mat<-as.matrix(Cortest_M) 
+
+pdf(file=file.path(path.out, "Figure_3D.pdf"), width=12, height=7)
+corrplot(corr_M, sig.level=c(0.0001, 0.001,0.01,0.05),insig="label_sig",method="circle", p.mat=p.mat, tl.col="black", col=colorRampPalette(c("skyblue3","white","tomato3"))(200),
+         ol=colorRampPalette(c("skyblue3","white","tomato3"))(200), pch.cex=1, pch.col="white",
+         cl.pos = 'r', cl.length=5, cl.ratio=0.6)
+dev.off()
+
+toexport<-corr_data %>% as.data.frame()
+pvalexport<-p.mat %>% as.data.frame()
+
+#xlsx::write.xlsx(x = toexport, file = paste0(path.out, "Fig3d_corrdat.xlsx"), row.names = FALSE)
+#xlsx::write.xlsx(x = pvalexport, file = paste0(path.out, "Fig3d_corrdat_pvalues.xlsx"), row.names = FALSE)
+```
+
+#Fig3 D
+```{r long covid prepare data}
+ClinicallMerge.lc<- read_excel(paste0(path.input, "Figure_3_data.xlsx"))
+
+#find ids from patients that will get LC
+LC6.ids<-ClinicallMerge.lc %>% dplyr::filter(PACS6M==1) %>% pull(PatID) %>% unique()
+LC12.ids<-ClinicallMerge.lc %>% dplyr::filter(PACS12M==1) %>% pull(PatID) %>% unique()
+
+
+ClinicallMerge.lc<-ClinicallMerge.lc %>% 
+  mutate(LC6=ifelse(PatID %in% LC6.ids, "YES", "NO")) %>% 
+  mutate(LC12=ifelse(PatID %in% LC12.ids, "YES", "NO")) %>% 
+  dplyr::filter(Sampling_timepoint!="Healthy") %>% 
+  dplyr::filter(Sampling_timepoint!="Vaccinated")
+```
+#Fig3E
+
+```{r}
+to_plot0<-read.csv(file.path(paste0(path.input, "/Figure_3E_data.csv")))
+healthy<-to_plot0%>%dplyr::filter(SevSamp2=="Healthy")
+to_plot<-to_plot0%>%dplyr::filter(SevSamp2!="Healthy")
+
+column_<-"Tcons_HLADR_Geometric.Mean"
+healthy$to_plot<-healthy[[column_]]
+
+to_plot$Sampling_month_simple<-ifelse(to_plot$SevSamp2=="Healthy", "Healthy",
+                                      ifelse(to_plot$Sampling_month%in%c("ONE","TWO"), "Acute COVID-19",
+                                             ifelse(to_plot$Sampling_month=="SIX", "6-month follow-up",
+                                                    ifelse(to_plot$Sampling_month=="TWELVE", "12-month follow-up",
+                                                           NA))))
+to_plot$Sampling_month_simple<-factor(to_plot$Sampling_month_simple, levels=c("Healthy","Acute COVID-19","6-month follow-up","12-month follow-up"))
+to_plot$to_plot<-as.double(to_plot[[column_]])
+to_plot_no_healthy<-to_plot%>%dplyr::filter(SevSamp2!="Healthy")
+
+test_baseline_6months<-to_plot_no_healthy%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("Acute COVID-19", "6-month follow-up"))
+paired_samples_indices<-test_baseline_6months%>%dplyr::filter(Sampling_timepoint=="ONE")%>%
+  dplyr::filter(trunced_Index %in% all_of(test_baseline_6months%>%dplyr::filter(Sampling_timepoint=="SIX")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+  select(trunced_Index)%>%unlist(use.names=FALSE)
+
+test_baseline_6months_paired<-test_baseline_6months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)%>%arrange(Index)
+table(test_baseline_6months_paired$Sampling_month_simple)
+test_baseline_6months_paired$Sampling_month_simple<-factor(test_baseline_6months_paired$Sampling_month_simple, levels=c("Acute COVID-19", "6-month follow-up"))
+stats_baseline_6months<-test_baseline_6months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("Acute COVID-19", "6-month follow-up")))
+
+#6 months 1 year: 
+test_6months_12months<-to_plot_no_healthy%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("6-month follow-up", "12-month follow-up"))
+paired_samples_indices<-test_6months_12months%>%dplyr::filter(Sampling_month=="SIX")%>%
+  dplyr::filter(trunced_Index %in% all_of(test_6months_12months%>%dplyr::filter(Sampling_month=="TWELVE")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+  select(trunced_Index)%>%unlist(use.names=FALSE)
+
+test_6months_12months_paired<-test_6months_12months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)%>%arrange(Index)
+table(test_6months_12months_paired$Sampling_month_simple)
+test_6months_12months_paired$Sampling_month_simple<-factor(test_6months_12months_paired$Sampling_month_simple, levels=c("6-month follow-up", "12-month follow-up"))
+stats_6months_12months<-test_6months_12months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("6-month follow-up", "12-month follow-up")))
+
+#baseline 1 year: 
+test_acute_12months<-to_plot%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("Acute COVID-19", "12-month follow-up"))
+paired_samples_indices<-test_acute_12months%>%dplyr::filter(Sampling_timepoint=="ONE")%>%
+  dplyr::filter(trunced_Index %in% all_of(test_acute_12months%>%dplyr::filter(Sampling_timepoint=="TWELVE")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+  select(trunced_Index)%>%unlist(use.names=FALSE)
+
+test_acute_12months_paired<-test_acute_12months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)
+table(test_acute_12months_paired$Sampling_month_simple)
+test_acute_12months_paired$Sampling_month_simple<-factor(test_acute_12months_paired$Sampling_month_simple, levels=c("Acute COVID-19", "12-month follow-up"))
+stats_acute_12months<-test_acute_12months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("Acute COVID-19", "12-month follow-up")))
+
+stat_results<-rbind(stats_baseline_6months,stats_6months_12months, stats_acute_12months)
+
+y.max<-max(to_plot$to_plot, na.rm=TRUE)
+
+a<-ggplot(to_plot, aes(x=Sampling_month_simple, y=to_plot))+
+  geom_hline(yintercept=median(healthy$to_plot),  size=1.5, color="black", alpha=0.2)+
+  geom_violin(aes(fill=Sampling_month_simple),draw_quantiles=c(0.5))+
+  geom_jitter(width=0.05, size=3.2, height=0)+
+  scale_color_manual(values=colvec14[c(1:3)])+
+  scale_fill_manual(values=colvec14[c(1:3)])+
+  scale_alpha_manual(values=c(rep(c(0.5,0.3,0.15),2)))+
+  theme_classic()+
+  xlab("")+
+  ylab("HLA-DR (gMFI)")+
+  geom_line(data=to_plot%>%dplyr::filter(SevSamp2!="Healthy"), aes(group=trunced_Index), alpha=0.15)+
+  theme(text = element_text(size=16),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        axis.text.x = element_blank(),
+        axis.ticks.x =element_blank(),
+        axis.title.x = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        #legend.position = "bottom",
+        plot.title = element_text(hjust=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  stat_pvalue_manual(stat_results, y.position=(c(1.1,1.2, 1.3)*y.max),label="p" )+
+  ylim(c(NA, 1.4*y.max))+
+  ggtitle("CD4+")+
+  stat_summary(fun = median, geom = "point",size=4, color="black")
+
+#xlsx::write.xlsx(x = to_plot, file = paste0(path.out, "Fig3e_CD8.xlsx"), row.names = FALSE)
+
+column_<-"CD8_HLADR_Geometric.Mean"
+healthy$to_plot<-healthy[[column_]]
+to_plot$to_plot<-as.double(to_plot[[column_]])
+
+test_baseline_6months<-to_plot_no_healthy%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("Acute COVID-19", "6-month follow-up"))
+paired_samples_indices<-test_baseline_6months%>%dplyr::filter(Sampling_timepoint=="ONE")%>%
+  dplyr::filter(trunced_Index %in% all_of(test_baseline_6months%>%dplyr::filter(Sampling_timepoint=="SIX")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+  select(trunced_Index)%>%unlist(use.names=FALSE)
+
+test_baseline_6months_paired<-test_baseline_6months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)%>%arrange(Index)
+table(test_baseline_6months_paired$Sampling_month_simple)
+test_baseline_6months_paired$Sampling_month_simple<-factor(test_baseline_6months_paired$Sampling_month_simple, levels=c("Acute COVID-19", "6-month follow-up"))
+stats_baseline_6months<-test_baseline_6months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("Acute COVID-19", "6-month follow-up")))
+
+#6 months 1 year: 
+test_6months_12months<-to_plot_no_healthy%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("6-month follow-up", "12-month follow-up"))
+paired_samples_indices<-test_6months_12months%>%dplyr::filter(Sampling_month=="SIX")%>%
+  dplyr::filter(trunced_Index %in% all_of(test_6months_12months%>%dplyr::filter(Sampling_month=="TWELVE")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+  select(trunced_Index)%>%unlist(use.names=FALSE)
+
+test_6months_12months_paired<-test_6months_12months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)%>%arrange(Index)
+table(test_6months_12months_paired$Sampling_month_simple)
+test_6months_12months_paired$Sampling_month_simple<-factor(test_6months_12months_paired$Sampling_month_simple, levels=c("6-month follow-up", "12-month follow-up"))
+stats_6months_12months<-test_6months_12months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("6-month follow-up", "12-month follow-up")))
+
+#baseline 1 year: 
+test_acute_12months<-to_plot%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("Acute COVID-19", "12-month follow-up"))
+paired_samples_indices<-test_acute_12months%>%dplyr::filter(Sampling_timepoint=="ONE")%>%
+  dplyr::filter(trunced_Index %in% all_of(test_acute_12months%>%dplyr::filter(Sampling_timepoint=="TWELVE")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+  select(trunced_Index)%>%unlist(use.names=FALSE)
+
+test_acute_12months_paired<-test_acute_12months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)
+table(test_acute_12months_paired$Sampling_month_simple)
+test_acute_12months_paired$Sampling_month_simple<-factor(test_acute_12months_paired$Sampling_month_simple, levels=c("Acute COVID-19", "12-month follow-up"))
+stats_acute_12months<-test_acute_12months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("Acute COVID-19", "12-month follow-up")))
+
+stat_results<-rbind(stats_baseline_6months,stats_6months_12months, stats_acute_12months)
+
+y.max<-max(to_plot$to_plot, na.rm=TRUE)
+
+b<-ggplot(to_plot, aes(x=Sampling_month_simple, y=to_plot))+
+  geom_hline(yintercept=median(healthy$to_plot),  size=1.5, color="black", alpha=0.2)+
+  geom_violin(aes(fill=Sampling_month_simple),  draw_quantiles=c(0.5))+
+  geom_jitter(width=0.05, size=3.2, height=0)+
+  scale_color_manual(values=colvec14[c(1:3)])+
+  scale_fill_manual(values=colvec14[c(1:3)])+
+  scale_alpha_manual(values=c(rep(c(0.5,0.3,0.15),2)))+
+  theme_classic()+
+  xlab("")+
+  ylab("HLA-DR (gMFI)")+
+  geom_line(data=to_plot%>% dplyr:: filter(SevSamp2!="Healthy"), aes(group=trunced_Index), alpha=0.15)+
+  theme(text = element_text(size=16),
+        axis.line = element_line (size=1),
+        #axis.text.x = element_text(size=18, angle=45, vjust=1, hjust=1),
+        axis.text.x = element_blank(),
+        axis.ticks.x =element_blank(),
+        axis.title.x = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        #legend.position = "bottom",
+        plot.title = element_text(hjust=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  stat_pvalue_manual(stat_results, y.position=(c(1.1,1.2, 1.3)*y.max),label="p" )+
+  ylim(c(NA, 1.4*y.max))+
+  ggtitle("CD8+")+
+  stat_summary(fun = median, geom = "point",size=4, color="black")
+
+#xlsx::write.xlsx(x = toexport, file = paste0(path.out, "Fig3d_corrdat.xlsx"), row.names = FALSE)
+a
+b
+```
+#S3A, B
+```{r}
+to_plot<-read.csv2(file.path(paste0(path.input, "/S3AB_data.csv")))
+
+to_plot$Sampling_month_new<-ifelse(to_plot$Sampling_month=="ONE", "Acute COVID-19",
+                                   ifelse(to_plot$Sampling_month=="SIX", "6-month follow-up",
+                                          NA))
+
+to_plot$Sampling_month_new<-factor(to_plot$Sampling_month_new, levels=c("Acute COVID-19", "6-month follow-up"))
+
+column_<-"sIL2R_USZ" 
+to_plot$to_plot<-to_plot[[column_]]
+
+to_plot1<-to_plot%>%dplyr::filter(Sampling_month%in%c("ONE","TWO"))
+my_comparisons<-list(c("Healthy", "Mild COVID-19, acute"),c("Severe COVID-19, acute", "Mild COVID-19, acute"),c("Healthy", "Severe COVID-19, acute"))
+stats_results<-to_plot1%>%ungroup()%>%wilcox_test(to_plot~Severity_month_max_simple, comparisons=my_comparisons)
+y.max<-max(to_plot1$to_plot)
+SeverityColors3<-c("grey","red", "#8F0B0B")
+
+
+a<-ggplot(to_plot1, aes(x=Severity_month_max_simple, y=to_plot))+
+  geom_violin(aes(fill=Severity_month_max_simple), alpha=0.3, draw_quantiles=c(0.5))+
+  geom_jitter(aes(color=Severity_month_max_simple),width=0.05, size=3.2, height=0)+
+  scale_color_manual(values=SeverityColors3)+
+  scale_fill_manual(values=SeverityColors3)+
+  theme_classic()+
+  xlab("")+
+  ylab("sIL-2Ra (pg/ml)")+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        axis.text.x = element_blank(),
+        axis.ticks.x =element_blank(),
+        axis.title.x = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        plot.title = element_text(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+  )+
+  stat_pvalue_manual(stats_results, y.position = (c(1.1,1.2,1.3)*y.max), label="p.adj", bracket.shorten =0.1)+
+  ylim(c(NA, 1.4*(y.max)))+
+  stat_summary(fun = median, geom = "point",size=4, color="black")
+legend<-get_legend(a)
+
+a
+
+#Figure S3A----
+
+to_plot1<-to_plot%>%dplyr::filter(Sampling_month_new=="Acute COVID-19")
+
+b<-ggplot(to_plot1, aes(x=`Tcells_CD25_Geometric.Mean`,y=sIL2R_USZ))+
+  geom_smooth(color="black", size=1.5, method="lm",se=F)+
+  geom_point(aes(color=Sampling_month_new), size=3.5)+
+  scale_color_manual( values=SeverityColors3[2])+
+  stat_cor(method="spearman", size=4.5)+
+  theme_classic()+
+  ylab("sIL-2Ra (pg/ml)")+
+  xlab("T cells CD25 (gMFI)")
+
+b
+```
+
+#S3D,E
+```{r}
+
+Sampling_month_simple_colors<-c("#D91A1A","#4D77EB", "darkseagreen2")
+
+
+to_plot<-read.csv2(file.path(path.input, "S3DE_data.csv"))
+
+colnames_short<-c("CD4_CM",
+                  "CD4_naive",
+                  "CD4_EM")
+
+colnames<-paste(colnames_short, "__Freq..of.CD4", sep="")
+
+
+colnames_simple<-c("CM",
+                   "naive",
+                   "EM")
+
+to_plot$Sampling_month_simple<-ifelse(to_plot$Sampling_month=="ONE", "Acute COVID-19",
+                                      ifelse(to_plot$Sampling_month=="SIX", "6-month follow-up",
+                                             ifelse(to_plot$Sampling_month=="TWELVE", "12-month follow-up",
+                                                    NA)))
+to_plot$Sampling_month_simple<-factor(to_plot$Sampling_month_simple, levels=c("Acute COVID-19","6-month follow-up", "12-month follow-up"))
+
+to_plot1<-to_plot%>%gather(key="Celltype", value="percentage", all_of(colnames))
+to_plot1$Celltype<-factor(to_plot1$Celltype, levels=colnames)
+levels(to_plot1$Celltype)<-colnames_simple
+
+to_plot2<-to_plot1%>%dplyr::filter(!is.na(Sampling_month_simple))
+
+levels<-levels(to_plot2$Sampling_month_simple)
+my_comparisons<-list(levels[c(1,2)], levels[c(1,3)], levels[c(2,3)])
+a<-ggplot(to_plot2, aes(x=Sampling_month_simple, y=percentage))+
+  geom_violin(aes(fill=Sampling_month_simple),  draw_quantiles=c(0.5), alpha=0.5)+
+  geom_jitter(aes(color=Sampling_month_simple),width=0.05, size=3.2, height=0)+
+  scale_color_manual(values=Sampling_month_simple_colors[c(1:3)])+
+  scale_fill_manual(values=Sampling_month_simple_colors[c(1:3)])+
+  theme_classic()+
+  xlab("")+
+  ylab("% of CD4+ T cells")+
+  geom_line(aes(group=trunced_Index), alpha=0.3)+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        axis.text.x = element_blank(),
+        axis.ticks.x =element_blank(),
+        axis.title.x = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.background = element_blank())+
+  stat_compare_means(comparisons=my_comparisons)+
+  facet_wrap(~Celltype, nrow=2, ncol=2, scale="free")+
+  ggtitle("CD4+")
+
+
+
+colnames_short<-c("CD8_CM",
+                  "CD8_naive",
+                  "CD8_EM",
+                  "CD8_TEMRA")
+
+colnames<-paste(colnames_short, "__Freq..of.CD8", sep="")
+
+colnames_simple<-c("CM",
+                   "naive",
+                   "EM",
+                   "TEMRA")
+
+to_plot1<-to_plot%>%gather(key="Celltype", value="percentage", all_of(colnames))
+to_plot1$Celltype<-factor(to_plot1$Celltype, levels=colnames)
+levels(to_plot1$Celltype)<-colnames_simple
+
+to_plot2<-to_plot1%>%dplyr::filter(!is.na(Sampling_month_simple))
+
+levels<-levels(to_plot2$Sampling_month_simple)
+my_comparisons<-list(levels[c(1,2)], levels[c(1,3)], levels[c(2,3)])
+b<-ggplot(to_plot2, aes(x=Sampling_month_simple, y=percentage))+
+  geom_violin(aes(fill=Sampling_month_simple),  draw_quantiles=c(0.5), alpha=0.5)+
+  geom_jitter(aes(color=Sampling_month_simple),width=0.05, size=3.2, height=0)+
+  scale_color_manual(values=Sampling_month_simple_colors[c(1:3)])+
+  scale_fill_manual(values=Sampling_month_simple_colors[c(1:3)])+
+  theme_classic()+
+  xlab("")+
+  ylab("% of CD8+ T cells")+
+  geom_line(aes(group=trunced_Index), alpha=0.3)+
+  theme(text = element_text(size=20),
+        axis.line = element_line (size=1),
+        axis.text.x = element_blank(),
+        axis.ticks.x =element_blank(),
+        axis.title.x = element_blank(),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.position = "none",
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.background = element_blank())+
+  stat_compare_means(comparisons=my_comparisons)+
+  facet_wrap(~Celltype, nrow=2, ncol=2, scale="free")+
+  ggtitle("CD8+")
+
+a
+b
+
+
+#write.xlsx(to_plot2, paste0(path.out, "memorySubsets.xlsx"))
+```
+#Figure S5a
+```{r}
+MFI_simple<-c("CD25", "CD122", "CD127")
+CD8_subsets<-c("CD8_naive", "CD8_EM", "CD8_CM", "CD8_TEMRA")
+CD4_subsets<-c("CD4_naive", "CD4_EM", "CD4_CM")
+
+dataset<-read.csv2(file.path(path.input, "Figure_S4_data.csv"))
+dir_where_to_save<-file.path(paste(path.out,"Figure_S4", sep="/"))
+
+Sampling_month_simple_colors<-c("#D91A1A","#4D77EB", "darkseagreen2")
+
+for(f in 1:length(MFI_simple)) {
+  
+  MFI<-MFI_simple[f]
+  
+  
+  ##plot for CD4:
+  CD4_plotlist<-list()
+  for(i in 1:length(CD4_subsets)){
+    
+    column_<-paste0(CD4_subsets[i],"_circle_", MFI, "_Geometric.Mean")
+    to_plot<-dataset%>%dplyr::filter(!(Sampling_timepoint=="TWELVE"&Sample_type=="Patient"&FACS_again=="YES"&FACS_run%in%c("Run_12","Run_13"))&SevSamp2!="Healthy")%>%mutate(trunced_Index=trunc(Index))
+    to_plot$Sampling_month_simple<- ifelse(to_plot$Sampling_month%in%c("ONE","TWO"), "Acute COVID-19",
+                                           ifelse(to_plot$Sampling_month=="SIX", "6-month follow-up",
+                                                  ifelse(to_plot$Sampling_month=="TWELVE", "12-month follow-up",
+                                                         NA)))
+    to_plot$Sampling_month_simple<-factor(to_plot$Sampling_month_simple, levels=c("Acute COVID-19","6-month follow-up","12-month follow-up"))
+    to_plot$to_plot<-as.double(to_plot[[column_]])
+    to_plot_no_healthy<-to_plot
+    
+    test_baseline_6months<-to_plot_no_healthy%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("Acute COVID-19", "6-month follow-up"))
+    paired_samples_indices<-test_baseline_6months%>%dplyr::filter(Sampling_timepoint=="ONE")%>%
+      dplyr::filter(trunced_Index %in% all_of(test_baseline_6months%>%dplyr::filter(Sampling_timepoint=="SIX")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+      select(trunced_Index)%>%unlist(use.names=FALSE)
+    
+    test_baseline_6months_paired<-test_baseline_6months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)%>%arrange(Index)
+    table(test_baseline_6months_paired$Sampling_month_simple)
+    test_baseline_6months_paired$Sampling_month_simple<-factor(test_baseline_6months_paired$Sampling_month_simple, levels=c("Acute COVID-19", "6-month follow-up"))
+    stats_baseline_6months<-test_baseline_6months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("Acute COVID-19", "6-month follow-up")))
+    
+    #6 months 1 year: 
+    test_6months_12months<-to_plot_no_healthy%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("6-month follow-up", "12-month follow-up"))
+    paired_samples_indices<-test_6months_12months%>%dplyr::filter(Sampling_month=="SIX")%>%
+      dplyr::filter(trunced_Index %in% all_of(test_6months_12months%>%dplyr::filter(Sampling_month=="TWELVE")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+      select(trunced_Index)%>%unlist(use.names=FALSE)
+    
+    test_6months_12months_paired<-test_6months_12months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)%>%arrange(Index)
+    table(test_6months_12months_paired$Sampling_month_simple)
+    test_6months_12months_paired$Sampling_month_simple<-factor(test_6months_12months_paired$Sampling_month_simple, levels=c("6-month follow-up", "12-month follow-up"))
+    stats_6months_12months<-test_6months_12months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("6-month follow-up", "12-month follow-up")))
+    
+    #baseline 1 year: 
+    test_acute_12months<-to_plot%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("Acute COVID-19", "12-month follow-up"))
+    paired_samples_indices<-test_acute_12months%>%dplyr::filter(Sampling_timepoint=="ONE")%>%
+      dplyr::filter(trunced_Index %in% all_of(test_acute_12months%>%dplyr::filter(Sampling_timepoint=="TWELVE")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+      select(trunced_Index)%>%unlist(use.names=FALSE)
+    
+    test_acute_12months_paired<-test_acute_12months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)
+    table(test_acute_12months_paired$Sampling_month_simple)
+    test_acute_12months_paired$Sampling_month_simple<-factor(test_acute_12months_paired$Sampling_month_simple, levels=c("Acute COVID-19", "12-month follow-up"))
+    stats_acute_12months<-test_acute_12months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("Acute COVID-19", "12-month follow-up")))
+    
+    
+    
+    
+    stat_results<-rbind(stats_baseline_6months,stats_6months_12months, stats_acute_12months)
+    
+    
+    y.max<-max(to_plot$to_plot, na.rm=TRUE)
+    
+    CD4_plotlist[[i]] <-ggplot(to_plot, aes(x=Sampling_month_simple, y=to_plot))+
+      geom_violin(aes(fill=Sampling_month_simple, alpha=Sampling_month_simple),  draw_quantiles=c(0.5))+
+      geom_jitter(aes(color=Sampling_month_simple),width=0.05, size=3.2, height=0)+
+      geom_line(aes(group=trunced_Index), alpha=0.15)+
+      scale_color_manual(values=Sampling_month_simple_colors[c(1:3)])+
+      scale_fill_manual(values=Sampling_month_simple_colors[c(1:3)])+
+      scale_alpha_manual(values=c(rep(c(0.5,0.3,0.15),2)))+
+      theme_classic()+
+      xlab("")+
+      ylab(paste(MFI, "(gMFI)"))+
+      theme(text = element_text(size=16),
+            axis.line = element_line (size=1),
+            axis.text.x = element_blank(),
+            axis.ticks.x =element_blank(),
+            axis.title.x = element_blank(),
+            legend.title = element_blank(),
+            legend.justification = "top",
+            legend.position = "bottom",
+            plot.title = element_text(hjust=0.5),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank()
+      )+
+      stat_pvalue_manual(stat_results, y.position=(c(1.1,1.2, 1.3)*y.max),label="p" )+
+      ylim(c(NA, 1.4*y.max))+
+      ggtitle(CD4_subsets[i])+
+      stat_summary(fun = median, geom = "point",size=4, color="black")
+    
+  }
+  ggarrange(plotlist=CD4_plotlist, ncol=length(CD4_plotlist), common.legend=T, legend="right")
+  plot_title<-paste("Figure_S4", f, MFI, "CD4.pdf", sep="_")
+  ggsave(file.path(dir_where_to_save,plot_title),
+         width=12,
+         height=4,
+         units=c("in"))
+  ##plot for CD8:
+  
+  CD8_plotlist<-list()
+  for(i in 1:length(CD8_subsets)){
+    
+    column_<-paste0(CD8_subsets[i],"_circle_", MFI, "_Geometric.Mean")
+    to_plot<-dataset%>%dplyr::filter(!(Sampling_timepoint=="TWELVE"&Sample_type=="Patient"&FACS_again=="YES"&FACS_run%in%c("Run_12","Run_13"))&SevSamp2!="Healthy")%>%mutate(trunced_Index=trunc(Index))
+    to_plot$Sampling_month_simple<-ifelse(to_plot$Sampling_month%in%c("ONE","TWO"), "Acute COVID-19",
+                                          ifelse(to_plot$Sampling_month=="SIX", "6-month follow-up",
+                                                 ifelse(to_plot$Sampling_month=="TWELVE", "12-month follow-up",
+                                                        NA)))
+    to_plot$Sampling_month_simple<-factor(to_plot$Sampling_month_simple, levels=c("Acute COVID-19","6-month follow-up","12-month follow-up"))
+    to_plot$to_plot<-as.double(to_plot[[column_]])
+    to_plot_no_healthy<-to_plot
+    
+    test_baseline_6months<-to_plot_no_healthy%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("Acute COVID-19", "6-month follow-up"))
+    paired_samples_indices<-test_baseline_6months%>%dplyr::filter(Sampling_timepoint=="ONE")%>%
+      dplyr::filter(trunced_Index %in% all_of(test_baseline_6months%>%dplyr::filter(Sampling_timepoint=="SIX")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+      select(trunced_Index)%>%unlist(use.names=FALSE)
+    
+    test_baseline_6months_paired<-test_baseline_6months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)%>%arrange(Index)
+    table(test_baseline_6months_paired$Sampling_month_simple)
+    test_baseline_6months_paired$Sampling_month_simple<-factor(test_baseline_6months_paired$Sampling_month_simple, levels=c("Acute COVID-19", "6-month follow-up"))
+    stats_baseline_6months<-test_baseline_6months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("Acute COVID-19", "6-month follow-up")))
+    
+    #6 months 1 year: 
+    test_6months_12months<-to_plot_no_healthy%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("6-month follow-up", "12-month follow-up"))
+    paired_samples_indices<-test_6months_12months%>%dplyr::filter(Sampling_month=="SIX")%>%
+      dplyr::filter(trunced_Index %in% all_of(test_6months_12months%>%dplyr::filter(Sampling_month=="TWELVE")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+      select(trunced_Index)%>%unlist(use.names=FALSE)
+    
+    test_6months_12months_paired<-test_6months_12months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)%>%arrange(Index)
+    table(test_6months_12months_paired$Sampling_month_simple)
+    test_6months_12months_paired$Sampling_month_simple<-factor(test_6months_12months_paired$Sampling_month_simple, levels=c("6-month follow-up", "12-month follow-up"))
+    stats_6months_12months<-test_6months_12months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("6-month follow-up", "12-month follow-up")))
+    
+    #baseline 1 year: 
+    test_acute_12months<-to_plot%>%arrange(Index)%>%dplyr::filter(!is.na(to_plot)&Sampling_month_simple %in% c("Acute COVID-19", "12-month follow-up"))
+    paired_samples_indices<-test_acute_12months%>%dplyr::filter(Sampling_timepoint=="ONE")%>%
+      dplyr::filter(trunced_Index %in% all_of(test_acute_12months%>%dplyr::filter(Sampling_timepoint=="TWELVE")%>%select(trunced_Index)%>%unlist(use.names=FALSE)))%>%
+      select(trunced_Index)%>%unlist(use.names=FALSE)
+    
+    test_acute_12months_paired<-test_acute_12months%>%dplyr::filter(trunced_Index %in% paired_samples_indices)
+    table(test_acute_12months_paired$Sampling_month_simple)
+    test_acute_12months_paired$Sampling_month_simple<-factor(test_acute_12months_paired$Sampling_month_simple, levels=c("Acute COVID-19", "12-month follow-up"))
+    stats_acute_12months<-test_acute_12months_paired%>%wilcox_test(to_plot~Sampling_month_simple, paired=TRUE,comparisons=list(c("Acute COVID-19", "12-month follow-up")))
+    
+    
+    
+    
+    stat_results<-rbind(stats_baseline_6months,stats_6months_12months, stats_acute_12months)
+    
+    
+    y.max<-max(to_plot$to_plot, na.rm=TRUE)
+    
+    CD8_plotlist[[i]] <-ggplot(to_plot, aes(x=Sampling_month_simple, y=to_plot))+
+      geom_violin(aes(fill=Sampling_month_simple, alpha=Sampling_month_simple),  draw_quantiles=c(0.5))+
+      geom_jitter(aes(color=Sampling_month_simple),width=0.05, size=3.2, height=0)+
+      geom_line(aes(group=trunced_Index), alpha=0.15)+
+      scale_color_manual(values=Sampling_month_simple_colors[c(1:3)])+
+      scale_fill_manual(values=Sampling_month_simple_colors[c(1:3)])+
+      scale_alpha_manual(values=c(rep(c(0.5,0.3,0.15),2)))+
+      theme_classic()+
+      xlab("")+
+      ylab(paste(MFI, "(gMFI)"))+
+      theme(text = element_text(size=16),
+            axis.line = element_line (size=1),
+            axis.text.x = element_blank(),
+            axis.ticks.x =element_blank(),
+            axis.title.x = element_blank(),
+            legend.title = element_blank(),
+            legend.justification = "top",
+            legend.position = "bottom",
+            plot.title = element_text(hjust=0.5),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank()
+      )+
+      stat_pvalue_manual(stat_results, y.position=(c(1.1,1.2, 1.3)*y.max),label="p" )+
+      ylim(c(NA, 1.4*y.max))+
+      ggtitle(CD8_subsets[i])+
+      stat_summary(fun = median, geom = "point",size=4, color="black")
+    
+  }
+  ggarrange(plotlist=CD8_plotlist, ncol=length(CD8_plotlist), common.legend=T, legend="none")
+  plot_title<-paste("Figure_S4", f, MFI, "CD8.pdf", sep="_")
+  ggsave(file.path(dir_where_to_save,plot_title),
+         width=13.5,
+         height=4,
+         units=c("in"))
+}
+
+
+sourcedat<-dataset %>% as.data.frame()
+```
+
+
+```{r LC12 tests}
+CD8.CD25<-ClinicallMerge.lc %>%
+  group_by(Sampling_timepoint) %>% 
+  rstatix::wilcox_test(`CD8_CD25_Geometric Mean`~ LC12, comparisons = list(c("YES", "NO"))) %>% 
+  add_xy_position()
+  
+
+CD4.CD25<-ClinicallMerge.lc %>%
+  group_by(Sampling_timepoint) %>% 
+   rstatix::wilcox_test(`CD4_CD25_Geometric Mean`~ LC12, comparisons = list(c("YES", "NO")))%>% 
+  add_xy_position()
+```
+
+```{r 12M direct plotting}
+ggplot(ClinicallMerge.lc, aes(x=LC12, y=`CD8_CD25_Geometric Mean`))+
+  geom_boxplot(aes(fill=Sampling_timepoint),draw_quantiles = c(0.5), alpha=0.4, size=1)+
+  geom_jitter(aes(colour=SevMax2), size=3, width = .05)+
+  theme_bw()+
+   theme(strip.background = element_blank())+
+  stat_pvalue_manual(CD8.CD25)+
+  facet_wrap(~Sampling_timepoint, scales = "free", ncol = 2)+
+  scale_colour_manual(values = c("grey", "darkred"))+
+  scale_fill_manual(values = Sevcolours)+
+  scale_y_continuous(limits = c(0.8,1.8))
+
+ggplot(ClinicallMerge.lc, aes(x=LC12, y=`CD4_CD25_Geometric Mean`))+
+  geom_boxplot(aes(fill=Sampling_timepoint),draw_quantiles = c(0.5), alpha=0.4, size=1)+
+  geom_jitter(aes(colour=SevMax2), size=3, width = .05)+
+  theme_bw()+
+   theme(strip.background = element_blank())+
+  stat_pvalue_manual(CD4.CD25)+
+  facet_wrap(~Sampling_timepoint, scales = "free", ncol = 2)+
+  scale_colour_manual(values = c("grey", "darkred"))+
+  scale_fill_manual(values = Sevcolours)
+```
+
+
+```{r 12M plotting T cell subsets}
+long.df<-ClinicallMerge.lc %>% dplyr::select(LC6, LC12, Sampling_timepoint, SevMax2, SevMax6, TWE_Symptom_count,PatID ,`Tcells_CD25_Geometric Mean`, `Tcells_CD127_Geometric Mean`, `CD4_CD25_Geometric Mean`, `CD4_CD127_Geometric Mean`, `CD8_CD25_Geometric Mean`, `CD8_CD127_Geometric Mean`, `CD4_CM_CD25_Geometric Mean`, `CD4_CM_CD127_Geometric Mean`, `CD4_EM_CD25_Geometric Mean`, `CD4_EM_CD127_Geometric Mean`, `CD4_naive_CD25_Geometric Mean`, `CD4_naive_CD127_Geometric Mean`, `CD8_EM_CD25_Geometric Mean`, `CD8_EM_CD127_Geometric Mean`, `CD8_CM_CD25_Geometric Mean`, `CD8_CM_CD127_Geometric Mean`, `CD8_naive_CD25_Geometric Mean`, `CD8_naive_CD127_Geometric Mean`, `CD8_TEMRA_CD25_Geometric Mean`, `CD8_TEMRA_CD127_Geometric Mean`, `CD4_CD122_Geometric Mean`, `CD8_CD122_Geometric Mean`, `Tcells_CD122_Geometric Mean`) %>% 
+  pivot_longer(cols=-c("LC6", "LC12", "Sampling_timepoint", "SevMax2", "SevMax6", "TWE_Symptom_count", "PatID"),names_to = "marker", values_to = "mFI") %>% as.data.frame()
+
+#xlsx::write.xlsx(x = long.df, file = paste0(path.out, "2025-07-21-LC_symptomNR.xlsx"), row.names = FALSE)
+```
+
+```{r}
+
+long.df<-read_excel(paste0(path.out, "2025-07-21-LC_symptomNR.xlsx"))
+
+long.df %>% dplyr::select(Sampling_timepoint, LC12, TWE_Symptom_count) %>% table()
+
+
+```
+
+
+```{r 6M plotting different T cell subsets}
+Sevmax6.cols<-c("grey", "lightblue", "darkblue", "orange", "darkorange", "darkred")
+
+if(!exists(paste0(path.out, "6M_PACS_SevMax6"))){dir.create(paste0(path.out, "6M_PACS_SevMax6"))}
+for (m in unique(long.df$marker)) {
+df<-long.df %>% dplyr::filter(marker==m)  
+
+test<-df %>%
+  group_by(Sampling_timepoint) %>% 
+   rstatix::wilcox_test(mFI~ LC6, comparisons = list(c("YES", "NO")))%>% 
+  add_xy_position()
+
+
+p<-ggplot(df, aes(x=LC6, y=mFI))+
+  geom_boxplot(aes(fill=Sampling_timepoint),draw_quantiles = c(0.5), alpha=0.4, size=1)+
+  geom_point(position=position_jitterdodge(jitter.width = .05),alpha=0.8, aes(colour=SevMax6))+
+  #geom_jitter(aes(colour=SevMax6),position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0))+
+  theme_bw()+
+   theme(strip.background = element_blank())+
+  stat_pvalue_manual(test)+
+  facet_wrap(~Sampling_timepoint, ncol = 3)+
+  scale_colour_manual(values = Sevmax6.cols)+
+  scale_fill_manual(values = Sevcolours)+
+  ggtitle(paste(m, "6M", sep = "_"))
+
+#pdf(paste0(path.out, "6M_PACS_SevMax6/", m, "_6MSevMax6.pdf"), height = 4, width = 10)
+print(p)
+#dev.off()
+}
+
+sourcedat<-long.df %>% dplyr::filter(marker %in% c("Tcells_CD25_Geometric Mean","Tcells_CD127_Geometric Mean","Tcells_CD122_Geometric Mean"))
+#xlsx::write.xlsx(sourcedat, paste0(path.out, "sourcedatS7a.xlsx"))
+```
+
+```{r 12M plotting different T cell subsets}
+Sevmax6.cols<-c("grey", "lightblue", "darkblue", "orange", "darkorange", "darkred")
+
+if(!exists(paste0(path.out, "12M_PACS_SevMax6"))){dir.create(paste0(path.out, "12M_PACS_SevMax6"))}
+for (m in unique(long.df$marker)) {
+df<-long.df %>% dplyr::filter(marker==m)  
+
+test<-df %>%
+  group_by(Sampling_timepoint) %>% 
+   rstatix::wilcox_test(mFI~ LC12, comparisons = list(c("YES", "NO")))%>% 
+  add_xy_position()
+
+
+p<-ggplot(df, aes(x=LC12, y=mFI))+
+  geom_boxplot(aes(fill=Sampling_timepoint),draw_quantiles = c(0.5), alpha=0.4, size=1)+
+  geom_point(position=position_jitterdodge(jitter.width = .05),alpha=0.8, aes(colour=SevMax6))+
+  #geom_jitter(aes(colour=SevMax6),position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0))+
+  theme_bw()+
+   theme(strip.background = element_blank())+
+  stat_pvalue_manual(test)+
+  facet_wrap(~Sampling_timepoint,  ncol = 3)+
+  scale_colour_manual(values = Sevmax6.cols)+
+  scale_fill_manual(values = Sevcolours)+
+  ggtitle(paste(m, "12M", sep = "_"))
+
+pdf(paste0(path.out, "12M_PACS_SevMax6/", m, "_12MSevMax6.pdf"), height = 4, width = 10)
+print(p)
+dev.off()
+print(p)
+}
+
+long.df %>% dplyr::filter(marker== "Tcells_CD25_Geometric Mean") %>% dplyr::group_by(Sampling_timepoint, LC12) %>% dplyr::summarise(n=n())
+long.df %>% dplyr::filter(marker== "Tcells_CD25_Geometric Mean") %>% dplyr::group_by(Sampling_timepoint, SympGrouped) %>% dplyr::summarise(n=n())
+```
+
+
+
+```{r number of LC symptoms}
+
+
+long.df$SympGrouped<-ifelse(long.df$TWE_Symptom_count %in% c("0"), "0", ifelse(long.df$TWE_Symptom_count %in% c("1", "2"), "1-2",
+                                                                               ifelse(long.df$TWE_Symptom_count %in% c("3", "4", "5"), "3-5", NA)))
+
+
+long.df$SympGrouped1<-ifelse(long.df$TWE_Symptom_count %in% c("0"), "0", ifelse(long.df$TWE_Symptom_count %in% c("1"), "1",
+                                                                               ifelse(long.df$TWE_Symptom_count %in% c("2","3"), "2-3", "4-5")))
+
+
+grouplist<-list(c("0", "1-2"), c("0", "3-5"), c("1-2", "3-5"))
+group1list<-list(c("0", "1"), c("0", "2-3"), c("0", "4-5"), c("1", "2-3"), c("1", "4-5"))
+
+long.df$SympGrouped<-factor(long.df$SympGrouped, levels = c("0", "1-2", "3-5"))
+
+long.df$SympGrouped1<-factor(long.df$SympGrouped1, levels = c("0", "1", "2-3", "4-5"))
+
+for (m in unique(long.df$marker)) {
+df<-long.df %>% dplyr::filter(marker==m)  
+
+test<-df %>%
+ group_by(Sampling_timepoint) %>% 
+  rstatix::wilcox_test(mFI~ SympGrouped, comparisons =grouplist )%>% 
+  add_xy_position()
+
+
+p<-ggplot(df, aes(x=SympGrouped, y=mFI))+
+  geom_boxplot(aes(fill=Sampling_timepoint), alpha=0.4, size=1)+
+  geom_point(position=position_jitterdodge(jitter.width = .05),alpha=0.8, aes(colour=SevMax6))+
+  #geom_jitter(aes(colour=SevMax6),position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0))+
+  theme_bw()+
+   theme(strip.background = element_blank())+
+  stat_pvalue_manual(test, label = "p")+
+  facet_wrap(~Sampling_timepoint,  ncol = 3)+
+  scale_colour_manual(values = Sevmax6.cols)+
+  scale_fill_manual(values = Sevcolours)+
+  ggtitle(paste(m))
+
+#pdf(paste0(path.out, "12M_PACS_SevMax6/", m, "_12MSevMax6.pdf"), height = 4, width = 10)
+print(p)
+#dev.off()
+}
+
+if(!exists(paste0(path.out, "12M_PACS_Symptomnumber"))){dir.create(paste0(path.out, "12M_PACS_Symptomnumber"))}
+for (m in unique(long.df$marker)) {
+df<-long.df %>% dplyr::filter(marker==m)  
+
+test<-df %>%
+  rstatix::wilcox_test(mFI~ SympGrouped, comparisons =grouplist )%>% 
+  add_xy_position()
+
+
+p<-ggplot(df, aes(x=SympGrouped, y=mFI))+
+  geom_boxplot( alpha=0.4, size=1)+
+  geom_point(position=position_jitterdodge(jitter.width = .05),alpha=0.8, aes(colour=SevMax6))+
+  #geom_jitter(aes(colour=SevMax6),position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0))+
+  theme_bw()+
+   theme(strip.background = element_blank())+
+  stat_pvalue_manual(test, label = "p")+
+  scale_colour_manual(values = Sevmax6.cols)+
+  scale_fill_manual(values = Sevcolours)+
+  ggtitle(paste(m))
+
+pdf(paste0(path.out, "12M_PACS_Symptomnumber/", m, "_Symptomnumber.pdf"), height = 4, width = 5)
+print(p)
+dev.off()
+}
+```
+

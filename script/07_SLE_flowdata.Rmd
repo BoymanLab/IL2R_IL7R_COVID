@@ -1,0 +1,476 @@
+---
+title: "Flow_table"
+author: "lcegla"
+date: "12/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 16, fig.height = 9, message = FALSE)
+```
+# Libs
+```{r libs}
+library(readxl)
+library(tidyverse)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(rstudioapi)
+library(MetBrewer)
+```
+
+# Import data
+```{r import data}
+rm(list = ls())
+
+path.Data <- "../input/SLE_data/"
+path.Rout <- "../output/Figure_7/"
+
+files <- list.files(path.Data, full.names = TRUE)
+
+
+nk2 <- read_excel(files[2])
+nk1 <- read_excel(files[3])
+tb2 <- read_excel(files[4])
+tb1 <- read_excel(files[5])
+```
+
+# Tidy data
+```{r tidy data}
+#The two splitfiles each contain different measurements:
+colnames(tb2)[!colnames(tb2) %in% colnames(tb1)]
+colnames(tb1)[!colnames(tb1) %in% colnames(tb2)]
+colnames(nk2)[!colnames(nk2) %in% colnames(nk1)]
+colnames(nk1)[!colnames(nk1) %in% colnames(nk2)]
+
+#merge by rownames (by = 0)
+#During the merging process, unique columns will be dropped here (use merge(all = TRUE) to retain all)
+tb <- merge(t(tb1), t(tb2), by = 0)
+nk <- merge(t(nk1), t(nk2), by = 0)
+
+#tidy up the two data frames before rbind() (i.e. putting the dfs together)
+rownames(nk) <- nk$Row.names #add rownames
+nk <- nk %>% dplyr::select(-"Row.names") #remove rowname column from data frame (rownames are stored in the rownames slot)
+colnames(nk) <- nk[1,] #add colnames
+nk <- nk[2:nrow(nk),] #remove row with colnames
+nk <- nk %>% dplyr::select(-c("Mean", "SD")) %>% dplyr::select(-c("Mean", "SD")) #There are two occurences of "Mean" and "SD", hence twice
+nk <- nk %>% dplyr::select(-colnames(nk)[grepl("FMO", colnames(nk))]) #Remove FMO samples
+
+rownames(tb) <- tb$Row.names
+tb <- tb %>% dplyr::select(-"Row.names")
+colnames(tb) <- tb[1,]
+tb <- tb[2:nrow(tb),]
+tb <- tb %>% dplyr::select(-c("Mean", "SD")) %>% dplyr::select(-c("Mean", "SD"))
+tb <- tb %>% dplyr::select(-colnames(tb)[grepl("FMO", colnames(tb))])
+
+df <- rbind(tb, nk) #stack the two df on top of each other
+df <- df %>% dplyr::filter(df$`B1 MR.fcs` != "n/a %") #remove some empty lines
+
+df2 <- data.frame(sapply(df, function(x)(str_replace(x, " %", "")))) #remove the "%" sign in freq% lines, so we can as.numeric later
+rownames(df2) <- rownames(df) #add rownames again, these get lost in the sapply()
+```
+
+# Create meta file
+```{r md}
+#create a meta file from the file names
+md <- data.frame("file.name" = colnames(df2))
+md <- md %>% 
+  mutate("copy" = file.name) %>% 
+  separate(copy, c("well", "patient_id", "condition", ".fcs")) %>% 
+  dplyr::select(-c("well", ".fcs"))
+md[!md$condition %in% c("V2", "V3", "V8", "V9"), "condition"] <- "H"
+md <- md %>%
+  mutate("sample_id" = paste(patient_id, condition, sep = "_"))
+```
+
+# Create panel file
+panel in analogy to sce object; this df will contain information about each measurement.
+```{r panel}
+#create a panel df with all the info about each analysis
+panel <- data.frame("analysis" = rownames(df2))
+panel <- panel %>%
+  mutate("copy" = analysis) %>%
+  separate(copy, into = c("name", "type"), sep = "[|]")
+
+#Here, we tidy up the names of the measurement which will be used as plot titles. Needs refinement!
+panel$name <- str_replace_all(panel$name, "Time, SSC-A subset/FSC-A, SSC-A subset/Single Cells/Single Cells/|Live CD14-/|Live/NonTB/", "")
+panel$name <- str_replace_all(panel$name, "CD14, HLADR subset/|CD14, HLADR subset-1/|CD3[+]/|CD3[+] T cells/|CD4[+] T cells/", "")
+panel$name <- str_replace_all(panel$name, "/Ki67", " Ki67+")
+
+l <- str_split(panel$name, pattern = "/")
+for(m in 1:length(l)){
+  len <- length(l[[m]])
+  if(len == 0){
+    print("cant be length zero")
+    break
+  }else if(len == 1){
+    next
+  }else if(len >= 2){
+    l[[m]] <- paste(l[[m]][(len-1):len], collapse = " ")
+  }
+}
+
+panel$name <- l
+```
+
+
+# Plotting
+prepare data for plotting: transpose, make numeric, add condition and patient_id information
+```{r prepare Data}
+#we convert the characters into numbers (e.g. "1" -> 1) and add the names and timepoint info
+df3 <- data.frame(t(df2))
+df3 <- lapply(df3, as.numeric) %>% as.data.frame()
+colnames(df3) <- panel$analysis
+df3$timepoint <- md$condition
+df3$patient_id <- md$patient_id
+
+```
+
+# IL-2R analysis memory subsets
+```{r, fig.width=16, fig.height=9}
+asdf <- panel[panel$type %in% c(" Geometric Mean (CD122)", " Geometric Mean (CD132)", " Geometric Mean (CD25)") & 
+        panel$name %in% c("CD127low CD25+ Tregs ", "Q2: CCR7+ , CD45RA+ CD31+ conv CD4+ ", "Tconventional Q4: CCR7- , CD45RA- ", "Tconventional Q3: CCR7+ , CD45RA- ", "CD56bright NK Cells ", "CD56dim NK Cells ", "CD8+ T cells Q2: CCR7+ , CD45RA+ ", "CD8+ T cells Q3: CCR7+ , CD45RA- ", "CD8+ T cells Q4: CCR7- , CD45RA- ", "CD8+ T cells Q1: CCR7- , CD45RA+ ","CD19+ B Cells ", "Tconventional ","Tconventional NonNaive ","Tconventional Q2: CCR7+ , CD45RA+ ","CD8+ T cells "), "analysis"]
+
+df4 <- df3 %>% dplyr::select(c(asdf, "timepoint", "patient_id"))
+ga <- df4 %>% tidyr::gather(key = "analysis", value = "value", asdf)
+game <- merge(ga, panel)
+
+game$name[game$name == "CD19+ B Cells "] <- "B cells"
+game$name[game$name == "CD127low CD25+ Tregs "] <- "Tregs"
+game$name[game$name == "Q2: CCR7+ , CD45RA+ CD31+ conv CD4+ "] <- "naive CD31+ Tcon"
+game$name[game$name == "Tconventional Q3: CCR7+ , CD45RA- "] <- "CD4 Tcm"
+game$name[game$name == "Tconventional Q4: CCR7- , CD45RA- "] <- "CD4 Tem"
+game$name[game$name == "CD8+ T cells Q2: CCR7+ , CD45RA+ "] <- "naive CD8 T cells"
+game$name[game$name == "CD8+ T cells Q3: CCR7+ , CD45RA- "] <- "CD8 Tcm"
+game$name[game$name == "CD8+ T cells Q4: CCR7- , CD45RA- "] <- "CD8 Tem"
+game$name[game$name == "CD8+ T cells Q1: CCR7- , CD45RA+ "] <- "CD8 Temra"
+game$name[game$name == "CD56bright NK Cells "] <- "CD56bright NK cells"
+game$name[game$name == "CD56dim NK Cells "] <- "CD56dim NK cells"
+
+game$name <- factor(game$name, levels = c("Tregs", "naive CD31+ Tcon", "CD4 Tcm", "CD4 Tem", "naive CD8 T cells", "CD8 Tcm", "CD8 Tem", "CD8 Temra" ,"CD56bright NK cells", "CD56dim NK cells", "B cells","Tconventional ","Tconventional NonNaive ","CD8+ T cells "))
+
+
+### IL2R in SLE during IL-2 therapy
+df_int <- game %>% dplyr::filter(timepoint %in% c("V2", "V3"))
+df_int$type <- factor(df_int$type, levels = c(" Geometric Mean (CD25)", " Geometric Mean (CD122)", " Geometric Mean (CD132)"))
+df_int$comb <- paste(df_int$name, df_int$timepoint, sep = "_")
+df_int1<-df_int %>% 
+  dplyr::filter(type ==" Geometric Mean (CD25)") %>% 
+  dplyr::filter(name %in% c("Tregs", "naive CD31+ Tcon", "CD4 Tcm", "CD4 Tem", "naive CD8 T cells",
+                            "CD8 Tcm", "CD8 Tem", "CD8 Temra"))
+
+#xlsx::write.xlsx(x = df_int, file = paste0(path.Rout, "SLE_sourcedat.xlsx"), row.names = FALSE)
+
+
+ggplot(df_int, aes(x = timepoint, y = value))+
+  geom_violin(aes(color = name, fill = name, alpha = timepoint), draw_quantiles = 0.5)+
+  #geom_boxplot(width = 0.3, aes(fill = name), alpha = 0.4)+
+  #geom_jitter(aes(color = name), width = 0.2)+
+  geom_point(aes(color = name))+
+  geom_line(aes(group = patient_id), col = "gray", size = 0.3)+
+  theme_bw()+
+  labs(color = "Cell type", fill = "Cell type", y = "MFI", title = "IL-2 receptors in SLE patients during IL-2 therapy")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        strip.background = element_blank(),
+        legend.position = "none")+
+  stat_compare_means(comparisons = list(c("V2", "V3")), label = "p.adj", method = "t.test", paired = TRUE)+
+  #ylim(limits = c(0, NA))+
+  #scale_y_continuous(expand = expansion(mult = c(0.05, 0.12)))+
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0.05, 0.12)))+
+  scale_color_manual(values = met.brewer("Monet", n=length(df_int$name %>% unique)))+
+  scale_fill_manual(values = met.brewer("Monet", n=length(df_int$name %>% unique)))+
+  scale_alpha_discrete(range = c(0.7, 0.4))+
+  facet_grid(type~name, scales = "free_y")
+
+
+CD25stats<-df_int1 %>%
+      dplyr::group_by(name) %>%
+  rstatix::wilcox_test(formula = value ~ timepoint, comparisons = list(c("V2", "V3"), c("V8", "V9")),paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+CD25stats
+
+CD25stats$p.adj<-format(CD25stats$p.adj, scientific=T)
+
+CD25stats$p.adj<-as.numeric(CD25stats$p.adj)
+
+
+pdf(paste0(path.Rout, "2024-02-21-CD25_V2V3V8V9.pdf"), width = 10, height = 5)
+ggplot(df_int1, aes(x = timepoint, y = value))+
+  geom_violin(aes(fill = timepoint, alpha = timepoint),colour="black", draw_quantiles = 0.5)+
+  #geom_boxplot(width = 0.3, aes(fill = name), alpha = 0.4)+
+  #geom_jitter(aes(color = name), width = 0.2)+
+  geom_point(aes(color = timepoint))+
+  geom_line(aes(group = patient_id), col = "gray", size = 0.3)+
+  theme_bw()+
+  labs(color = "Cell type", fill = "Cell type", y = "MFI", title = "IL-2 receptors in SLE patients during IL-2 therapy")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        strip.background = element_blank(),
+        legend.position = "none")+
+  stat_pvalue_manual(CD25stats)+
+  #ylim(limits = c(0, NA))+
+  #scale_y_continuous(expand = expansion(mult = c(0.05, 0.12)))+
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0.05, 0.12)))+
+  scale_color_manual(values = met.brewer("Cassatt2", n=length(df_int$name %>% unique)))+
+  scale_fill_manual(values = met.brewer("Cassatt2", n=length(df_int$name %>% unique)))+
+  scale_alpha_discrete(range = c(0.7, 0.4))+
+  facet_wrap("name", scales = "free_y")+
+  theme_cowplot()
+dev.off()
+
+
+if(!exists(paste0(path.Rout, "AllIL2R_plots_V2V3"))){dir.create(paste0(path.Rout, "AllIL2R_plots_V2V3"))}
+for (receptor in unique(df_int$type)) {
+  df_int1<-df_int %>% dplyr::filter(type==receptor)
+for (subset in unique(df_int1$name)) {
+  int<-df_int1 %>% dplyr::filter(name==subset)
+   p1<- ggplot(int, aes(x = timepoint, y = value))+
+  geom_violin(aes(fill = timepoint, alpha = timepoint), colour="black",draw_quantiles = 0.5)+
+  #geom_boxplot(aes(color = name, fill = name, alpha = timepoint))+
+  #geom_jitter(aes(color = name), width = 0.2)+
+  geom_point(aes(color = timepoint))+
+  geom_line(aes(group = patient_id), col = "gray", size = 0.3)+
+  theme_bw()+
+  labs(color = "Cell type", fill = "Cell type", y = paste(receptor), title = paste(receptor, subset))+
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = "none",
+          strip.background = element_blank())+
+  #stat_pvalue_manual(ki67stats)+
+  #scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0.05, 0.12)))+
+  scale_color_manual(values = met.brewer("Cassatt2", n=length(df_int$name %>% unique)))+
+  scale_fill_manual(values = met.brewer("Cassatt2", n=length(df_int$name %>% unique)))+
+  scale_alpha_discrete(range = c(0.7, 0.3))+
+  theme_cowplot()
+ pdf(paste0(path.Rout, "AllIL2R_plots_V2V3/CD25_", subset, receptor ,".pdf"),
+      height = 3.5, width = 5)
+  print(p1) #print plot (has to be specified in a for-loop)
+  dev.off()    
+  
+}
+}
+
+
+Cd25avrgs<-df_int1 %>% 
+  dplyr::group_by(name, timepoint) %>% 
+  dplyr::summarise(avrg=mean(value), sd=sd(value), SEM= sd(value) / sqrt(n()))
+
+ggplot(Cd25avrgs, aes(timepoint, avrg))+
+  geom_point(aes(colour=name),size=4)+
+  geom_line(aes(group=name, colour=name))+
+  geom_errorbar(aes(ymin = avrg-SEM, ymax = avrg+SEM), width = 0.05)+
+  theme_cowplot()
+
+
+
+
+Cd25avrgsV8V9<-df_int1 %>% 
+  dplyr::group_by(name, timepoint) %>% 
+  dplyr::summarise(avrg=mean(value), sd=sd(value), SEM= sd(value) / sqrt(n()))
+
+ggplot(Cd25avrgsV8V9, aes(timepoint, avrg))+
+  geom_point(aes(colour=name),size=4)+
+  geom_line(aes(group=name, colour=name))+
+  geom_errorbar(aes(ymin = avrg-SEM, ymax = avrg+SEM), width = 0.05)+
+  theme_cowplot()
+
+### Ki67 in SLE during IL-2 therapy
+asdf <- panel[panel$name %in% c("CD19+ B Cells Ki67+ ", "CD127low CD25+ Tregs Ki67+ ", "Q2: CCR7+ , CD45RA+ CD31+ conv CD4+ Ki67+ ", "Tconventional Q3: CCR7+ , CD45RA- Ki67+ ", "Tconventional Q4: CCR7- , CD45RA- Ki67+ ", "CD8+ T cells Q2: CCR7+ , CD45RA+ Ki67+ ", "CD8+ T cells Q3: CCR7+ , CD45RA- Ki67+ ", "CD8+ T cells Q4: CCR7- , CD45RA- Ki67+ ","CD8+ T cells Q1: CCR7- , CD45RA+ Ki67+ ", "CD56bright NK Cells Ki67+ ", "CD56dim NK Cells Ki67+ ", "Tconventional ","Tconventional NonNaive ","Tconventional Q2: CCR7+ , CD45RA+ ","CD8+ T cells "), "analysis"]
+
+df4 <- df3 %>% dplyr::select(c(asdf, "timepoint", "patient_id"))
+ga <- df4 %>% tidyr::gather(key = "analysis", value = "value", asdf)
+game <- merge(ga, panel)
+
+game$name[game$name == "CD19+ B Cells Ki67+ "] <- "B cells"
+game$name[game$name == "CD127low CD25+ Tregs Ki67+ "] <- "Tregs"
+game$name[game$name == "Q2: CCR7+ , CD45RA+ CD31+ conv CD4+ Ki67+ "] <- "naive CD31+ Tcon"
+game$name[game$name == "Tconventional Q3: CCR7+ , CD45RA- Ki67+ "] <- "CD4 Tcm"
+game$name[game$name == "Tconventional Q4: CCR7- , CD45RA- Ki67+ "] <- "CD4 Tem"
+game$name[game$name == "CD8+ T cells Q2: CCR7+ , CD45RA+ Ki67+ "] <- "naive CD8 T cells"
+game$name[game$name == "CD8+ T cells Q3: CCR7+ , CD45RA- Ki67+ "] <- "CD8 Tcm"
+game$name[game$name == "CD8+ T cells Q4: CCR7- , CD45RA- Ki67+ "] <- "CD8 Tem"
+game$name[game$name == "CD8+ T cells Q1: CCR7- , CD45RA+ Ki67+ "] <- "CD8 Temra"
+game$name[game$name == "CD56bright NK Cells Ki67+ "] <- "CD56bright NK cells"
+game$name[game$name == "CD56dim NK Cells Ki67+ "] <- "CD56dim NK cells"
+
+game$name <- factor(game$name, levels = c("Tregs", "naive CD31+ Tcon", "CD4 Tcm", "CD4 Tem", "naive CD8 T cells", "CD8 Tcm", "CD8 Tem", "CD8 Temra" ,"CD56bright NK cells", "CD56dim NK cells", "B cells", "Tconventional ","Tconventional NonNaive ","CD8+ T cells "))
+
+df_int <- game %>% dplyr::filter(timepoint %in% c("V2", "V3"))
+df_int1<-df_int %>% 
+  dplyr::filter(name %in% c("Tregs", "naive CD31+ Tcon", "CD4 Tcm", "CD4 Tem", "naive CD8 T cells",
+                            "CD8 Tcm", "CD8 Tem", "CD8 Temra"))
+
+#xlsx::write.xlsx(x = df_int, file = paste0(path.Rout, "SLE_sourcedat-Ki67.xlsx"), row.names = FALSE)
+
+
+
+ggplot(df_int, aes(x = timepoint, y = value))+
+  geom_violin(aes( fill = timepoint, alpha = timepoint),colour="black", draw_quantiles = 0.5)+
+  #geom_boxplot(aes(color = name, fill = name, alpha = timepoint))+
+  #geom_jitter(aes(color = name), width = 0.2)+
+  geom_point(aes(color = timepoint))+
+  geom_line(aes(group = patient_id), col = "gray", size = 0.3)+
+  theme_bw()+
+  labs(color = "Cell type", fill = "Cell type", y = "Frequency of Parent (%)", title = "Frequency of Ki67+  in  SLE patients during IL-2 therapy")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = "none",
+          strip.background = element_blank())+
+  stat_compare_means(comparisons = list(c("V2", "V3")), label = "p.adj", method = "t.test", paired = TRUE)+
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0.05, 0.12)))+
+  scale_color_manual(values = met.brewer("Monet", n=length(df_int$name %>% unique)))+
+  scale_fill_manual(values = met.brewer("Monet", n=length(df_int$name %>% unique)))+
+  scale_alpha_discrete(range = c(0.7, 0.3))+
+  facet_wrap("name", scales = "free_y")
+dev.off()
+
+
+
+ki67stats<-df_int1 %>%
+      dplyr::group_by(name) %>%
+  rstatix::wilcox_test(formula = value ~ timepoint, comparisons = list(c("V2", "V3"), c("V8", "V9")),paired = T) %>%
+  adjust_pvalue(method = "fdr" ) %>%
+  add_xy_position()
+ki67stats
+
+ki67stats$p.adj<-format(ki67stats$p.adj, scientific=T)
+
+ki67stats$p.adj<-as.numeric(ki67stats$p.adj)
+
+
+pdf(paste0(path.Rout, "2024-02-21-Ki67_V2V3V8V9-nostats.pdf"), width = 10, height = 5)
+ggplot(df_int1, aes(x = timepoint, y = value))+
+  geom_violin(aes(fill = timepoint, alpha = timepoint), colour="black",draw_quantiles = 0.5)+
+  #geom_boxplot(aes(color = name, fill = name, alpha = timepoint))+
+  #geom_jitter(aes(color = name), width = 0.2)+
+  geom_point(aes(color = timepoint))+
+  geom_line(aes(group = patient_id), col = "gray", size = 0.3)+
+  theme_bw()+
+  labs(color = "Cell type", fill = "Cell type", y = "Frequency of Parent (%)", title = "Frequency of Ki67+  in  SLE patients during IL-2 therapy")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = "none",
+          strip.background = element_blank())+
+  stat_pvalue_manual(ki67stats)+
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0.05, 0.12)))+
+  scale_color_manual(values = met.brewer("Cassatt2", n=length(df_int$name %>% unique)))+
+  scale_fill_manual(values = met.brewer("Cassatt2", n=length(df_int$name %>% unique)))+
+  scale_alpha_discrete(range = c(0.7, 0.3))+
+   facet_wrap("name", scales = "free_y")+
+  theme_cowplot()
+dev.off()
+
+
+
+
+if(!exists(paste0(path.Rout, "Ki67_plotsV2V3"))){dir.create(paste0(path.Rout, "Ki67_plotsV2V3"))}
+
+for (subset in unique(df_int1$name)) {
+  int<-df_int1 %>% dplyr::filter(name==subset)
+   p1<- ggplot(int, aes(x = timepoint, y = value))+
+  geom_violin(aes(fill = timepoint, alpha = timepoint), colour="black",draw_quantiles = 0.5)+
+  #geom_boxplot(aes(color = name, fill = name, alpha = timepoint))+
+  #geom_jitter(aes(color = name), width = 0.2)+
+  geom_point(aes(color = timepoint))+
+  geom_line(aes(group = patient_id), col = "gray", size = 0.3)+
+  theme_bw()+
+  labs(color = "Cell type", fill = "Cell type", y = "Frequency of Parent (%)", title = paste("Ki67", subset))+
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = "none",
+          strip.background = element_blank())+
+  #stat_pvalue_manual(ki67stats)+
+  #scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0.05, 0.12)))+
+  scale_color_manual(values = met.brewer("Cassatt2", n=length(df_int$name %>% unique)))+
+  scale_fill_manual(values = met.brewer("Cassatt2", n=length(df_int$name %>% unique)))+
+  scale_alpha_discrete(range = c(0.7, 0.3))+
+  theme_cowplot()
+ pdf(paste0(path.Rout, "Ki67_plotsV2V3/Ki67_", subset ,".pdf"),
+      height = 3.5, width = 5)
+  print(p1) #print plot (has to be specified in a for-loop)
+  dev.off()    
+  
+}
+
+
+Ki67avrgsV8V9<-df_int1 %>% 
+  dplyr::group_by(name, timepoint) %>% 
+  dplyr::summarise(avrg=mean(value), sd=sd(value), SEM= sd(value) / sqrt(n()))
+
+
+
+
+Ki67avrgs<-df_int1 %>% 
+  dplyr::group_by(name, timepoint) %>% 
+  dplyr::summarise(avrg=mean(value), sd=sd(value), SEM= sd(value) / sqrt(n()))
+
+pdf(paste0(path.Rout,"Ki67combined.pdf"),
+      height = 3, width = 5)
+ggplot(Ki67avrgs, aes(timepoint, avrg))+
+  geom_point(aes(colour=name),size=4)+
+  geom_line(aes(group=name, colour=name))+
+  geom_errorbar(aes(ymin = avrg-SEM, ymax = avrg+SEM), width = 0.05)+
+  theme_cowplot()
+dev.off()
+
+
+pdf(paste0(path.Rout,"CD25combined.pdf"),
+      height = 3, width = 5)
+ggplot(Cd25avrgs, aes(timepoint, avrg))+
+  geom_point(aes(colour=name),size=4)+
+  geom_line(aes(group=name, colour=name))+
+  geom_errorbar(aes(ymin = avrg-SEM, ymax = avrg+SEM), width = 0.05)+
+  theme_cowplot()
+dev.off()
+
+pdf(paste0(path.Rout,"Ki67combinedV8V9.pdf"),
+      height = 3, width = 5)
+ggplot(Ki67avrgsV8V9, aes(timepoint, avrg))+
+  geom_point(aes(colour=name),size=4)+
+  geom_line(aes(group=name, colour=name))+
+  geom_errorbar(aes(ymin = avrg-SEM, ymax = avrg+SEM), width = 0.05)+
+  theme_cowplot()
+dev.off()
+
+
+pdf(paste0(path.Rout,"CD25combinedV8V9.pdf"),
+      height = 3, width = 5)
+ggplot(Cd25avrgsV8V9, aes(timepoint, avrg))+
+  geom_point(aes(colour=name),size=4)+
+  geom_line(aes(group=name, colour=name))+
+  geom_errorbar(aes(ymin = avrg-SEM, ymax = avrg+SEM), width = 0.05)+
+  theme_cowplot()
+dev.off()
+```
+
+
+```{r CD127}
+me1<- read_excel(files[1])
+
+### IL2R in SLE during IL-2 therapy
+df_int <- me1 %>% dplyr::filter(Visit %in% c("V2", "V3")) %>% as.data.frame()
+CD127avrgs<-df_int %>% 
+  dplyr::group_by(plotID, Visit) %>% 
+  dplyr::summarise(avrg=mean(measurement), sd=sd(measurement), SEM= sd(measurement) / sqrt(n()))
+
+
+ggplot(CD127avrgs, aes(Visit, avrg))+
+  geom_point(aes(colour=plotID),size=4)+
+  geom_line(aes(group=plotID, colour=plotID))+
+  geom_errorbar(aes(ymin = avrg-SEM, ymax = avrg+SEM), width = 0.05)+
+  theme_cowplot()
+
+
+#xlsx::write.xlsx(x = df_int, file = paste0(path.Rout, "SLE_sourcedat-CD127.xlsx"), row.names = FALSE)
+
+```
+
+
